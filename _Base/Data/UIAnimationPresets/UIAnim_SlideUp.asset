@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf0cadbc8ffed084ab6c7cefd2109be8, type: 3}
+  m_Name: UIAnim_SlideUp
+  m_EditorClassIdentifier: 
+  ShowType: 3
+  ShowDuration: 0.35
+  ShowEase: 6
+  ShowStartOffset: {x: 0, y: -1080}
+  HideType: 3
+  HideDuration: 0.25
+  HideEase: 5
+  HideEndOffset: {x: 0, y: -1080}

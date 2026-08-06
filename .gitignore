@@ -1,0 +1,35 @@
+# Unity auto-generated / IDE files
+[Library]/
+[Temp]/
+[Obj]/
+[Build]/
+[Builds]/
+[Logs]/
+[UserSettings]/
+[MemoryCaptures]/
+
+# IDE files
+.vs/
+.idea/
+.vsconfig
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# OS generated files
+.DS_Store
+Thumbs.db

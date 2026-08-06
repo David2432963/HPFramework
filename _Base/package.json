@@ -1,0 +1,11 @@
+{
+  "name": "com.base.vcontainer",
+  "version": "1.0.0",
+  "displayName": "_Base VContainer Framework",
+  "description": "Standalone, self-contained architecture base package built with VContainer DI framework.",
+  "unity": "2021.3",
+  "author": {
+    "name": "Base Team"
+  },
+  "dependencies": {}
+}
