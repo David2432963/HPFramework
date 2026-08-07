@@ -1,12 +1,12 @@
 using System.Diagnostics;
-using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace Base
 {
     /// <summary>
-    /// Zero-allocation conditional logging helper for _Base framework internal logs.
-    /// Define 'ENABLE_BASE_LOG' in Player Settings -> Scripting Define Symbols to enable detailed logging.
-    /// LogError and LogException are always compiled.
+    /// Conditional logging helper for framework internals.
+    /// Define ENABLE_BASE_LOG to enable informational logs.
+    /// Errors and exceptions are always emitted.
     /// </summary>
     public static class BaseLog
     {

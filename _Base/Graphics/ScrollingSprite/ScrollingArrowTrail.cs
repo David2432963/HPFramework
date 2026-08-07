@@ -3,7 +3,7 @@ using UnityEngine;
 [DisallowMultipleComponent]
 [ExecuteAlways]
 [RequireComponent(typeof(SpriteRenderer))]
-public sealed class ScrollingArrowTrail : MonoBehaviour, ILateTickHandler
+public sealed class ScrollingArrowTrail : MonoBehaviour
 {
     private enum TrailAxis
     {
@@ -45,13 +45,9 @@ public sealed class ScrollingArrowTrail : MonoBehaviour, ILateTickHandler
     {
         ValidateMaterial();
         ApplyProperties();
-        if (Application.isPlaying)
-        {
-            Main.Instance.Register(this);
-        }
     }
 
-    public void LateTick(float deltaTime)
+    private void LateUpdate()
     {
         ApplyProperties();
     }
@@ -74,10 +70,6 @@ public sealed class ScrollingArrowTrail : MonoBehaviour, ILateTickHandler
 
     private void OnDisable()
     {
-        if (Application.isPlaying)
-        {
-            Main.Instance?.Unregister(this);
-        }
 
         ClearPropertyBlock();
     }

@@ -1,28 +1,14 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
-using DG.Tweening;
 
 namespace Base.UI
 {
     /// <summary>
-    /// Controller for driving the "UIHole" and "UIBlur" shaders on a UI Graphic component (e.g. Image).
-    /// Used to punch single or multiple rounded rectangular holes into UI overlays (e.g. tutorial spotlights).
-    /// 
-    /// Example:
-    /// <code>
-    /// [SerializeField] private UIHoleController holeController;
-    /// [SerializeField] private RectTransform targetButton;
-    /// 
-    /// private void HighlightButton()
-    /// {
-    ///     holeController.SetHole(targetButton, cornerRadius: 16f); // Snap instantly
-    ///     holeController.AnimateHole(targetButton, 0.5f, cornerRadius: 16f); // Move smoothly
-    /// }
-    /// </code>
+    /// Drives UIHole/UIBlur shader properties without external tween dependencies.
     /// </summary>
-
-    public class UIHoleController : MonoBehaviour
+    public sealed class UIHoleController : MonoBehaviour
     {
         public struct HoleData
         {
@@ -41,35 +27,39 @@ namespace Base.UI
         private const int MaxHoleCount = 8;
 
         [SerializeField] private Graphic targetGraphic;
-        [SerializeField] private float softness = 10f;
+        [SerializeField, Min(0f)] private float softness = 10f;
+        [SerializeField] private AnimationCurve animationCurve =
+            AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
         private readonly Vector4[] holeCenters = new Vector4[MaxHoleCount];
         private readonly Vector4[] holeSizes = new Vector4[MaxHoleCount];
         private readonly float[] holeRadii = new float[MaxHoleCount];
-
-        // Backup for animation
         private readonly Vector4[] startCenters = new Vector4[MaxHoleCount];
         private readonly Vector4[] startSizes = new Vector4[MaxHoleCount];
         private readonly float[] startRadii = new float[MaxHoleCount];
+        private readonly Vector4[] targetCenters = new Vector4[MaxHoleCount];
+        private readonly Vector4[] targetSizes = new Vector4[MaxHoleCount];
+        private readonly float[] targetRadii = new float[MaxHoleCount];
 
-        private int currentHoleCount = 0;
-        private Tween currentTween;
-        private Material instantiatedMaterial;
+        private int currentHoleCount;
+        private Coroutine animationRoutine;
+        private Material originalMaterial;
+        private Material materialInstance;
         private RectTransform selfRectTransform;
 
-        private static readonly int HoleCentersID = Shader.PropertyToID("_HoleCenters");
-        private static readonly int HoleSizesID = Shader.PropertyToID("_HoleSizes");
-        private static readonly int HoleRadiiID = Shader.PropertyToID("_HoleRadii");
-        private static readonly int HoleCountID = Shader.PropertyToID("_HoleCount");
-        private static readonly int SoftnessID = Shader.PropertyToID("_Softness");
-        private static readonly int UseHoleID = Shader.PropertyToID("_UseHole");
+        private static readonly int HoleCentersId = Shader.PropertyToID("_HoleCenters");
+        private static readonly int HoleSizesId = Shader.PropertyToID("_HoleSizes");
+        private static readonly int HoleRadiiId = Shader.PropertyToID("_HoleRadii");
+        private static readonly int HoleCountId = Shader.PropertyToID("_HoleCount");
+        private static readonly int SoftnessId = Shader.PropertyToID("_Softness");
+        private static readonly int UseHoleId = Shader.PropertyToID("_UseHole");
 
         public float Softness
         {
             get => softness;
             set
             {
-                softness = value;
+                softness = Mathf.Max(0f, value);
                 ApplyProperties(currentHoleCount);
             }
         }
@@ -82,178 +72,226 @@ namespace Base.UI
             }
 
             selfRectTransform = transform as RectTransform;
-
             if (targetGraphic != null && targetGraphic.material != null)
             {
-                instantiatedMaterial = new Material(targetGraphic.material);
-                targetGraphic.material = instantiatedMaterial;
+                originalMaterial = targetGraphic.material;
+                materialInstance = new Material(originalMaterial)
+                {
+                    name = originalMaterial.name + " (UIHole Instance)"
+                };
+                targetGraphic.material = materialInstance;
             }
         }
 
-        /// <summary>
-        /// Set a single hole positioned over a target RectTransform instantly.
-        /// </summary>
-        public void SetHole(RectTransform target, float cornerRadius = 0f, Vector2 padding = default)
+        public void SetHole(
+            RectTransform target,
+            float cornerRadius = 0f,
+            Vector2 padding = default)
         {
-            if (target == null || selfRectTransform == null)
+            if (!TryBuildHole(target, cornerRadius, padding, out HoleData hole))
             {
                 ClearHoles();
                 return;
             }
 
-            Vector3 worldPos = target.position;
-            Vector2 localPos = selfRectTransform.InverseTransformPoint(worldPos);
-            Vector2 size = target.rect.size + padding;
-
-            SetHoles(new[] { new HoleData(localPos, size, cornerRadius) });
+            SetHoles(new[] { hole });
         }
 
-        /// <summary>
-        /// Smoothly transition to a single hole over a target RectTransform using DOTween.
-        /// </summary>
-        public void AnimateHole(RectTransform target, float duration, float cornerRadius = 0f, Vector2 padding = default, Ease ease = Ease.OutQuad)
+        public void AnimateHole(
+            RectTransform target,
+            float duration,
+            float cornerRadius = 0f,
+            Vector2 padding = default)
         {
-            if (target == null || selfRectTransform == null)
+            if (!TryBuildHole(target, cornerRadius, padding, out HoleData hole))
             {
                 ClearHoles();
                 return;
             }
 
-            Vector3 worldPos = target.position;
-            Vector2 localPos = selfRectTransform.InverseTransformPoint(worldPos);
-            Vector2 size = target.rect.size + padding;
-
-            AnimateHoles(new[] { new HoleData(localPos, size, cornerRadius) }, duration, ease);
+            AnimateHoles(new[] { hole }, duration);
         }
 
-        /// <summary>
-        /// Set multiple holes instantly.
-        /// </summary>
         public void SetHoles(HoleData[] holes)
         {
-            currentTween?.Kill();
-
-            int count = holes != null ? Mathf.Min(holes.Length, MaxHoleCount) : 0;
-
-            for (int i = 0; i < count; i++)
+            StopAnimation();
+            int count = holes == null ? 0 : Mathf.Min(holes.Length, MaxHoleCount);
+            for (int i = 0; i < MaxHoleCount; i++)
             {
-                holeCenters[i] = holes[i].center;
-                holeSizes[i] = holes[i].size;
-                holeRadii[i] = holes[i].radius;
-            }
-
-            for (int i = count; i < MaxHoleCount; i++)
-            {
-                holeCenters[i] = Vector4.zero;
-                holeSizes[i] = Vector4.zero;
-                holeRadii[i] = 0f;
+                if (i < count)
+                {
+                    holeCenters[i] = holes[i].center;
+                    holeSizes[i] = holes[i].size;
+                    holeRadii[i] = Mathf.Max(0f, holes[i].radius);
+                }
+                else
+                {
+                    holeCenters[i] = Vector4.zero;
+                    holeSizes[i] = Vector4.zero;
+                    holeRadii[i] = 0f;
+                }
             }
 
             ApplyProperties(count);
         }
 
-        /// <summary>
-        /// Smoothly transition multiple holes.
-        /// </summary>
-        public void AnimateHoles(HoleData[] holes, float duration, Ease ease = Ease.OutQuad)
+        public void AnimateHoles(HoleData[] holes, float duration)
         {
-            int targetCount = holes != null ? Mathf.Min(holes.Length, MaxHoleCount) : 0;
-            int maxActiveCount = Mathf.Max(currentHoleCount, targetCount); // ensure we lerp currently visible holes
+            StopAnimation();
+            int targetCount = holes == null ? 0 : Mathf.Min(holes.Length, MaxHoleCount);
+            int activeCountDuringTransition = Mathf.Max(currentHoleCount, targetCount);
 
-            // If transitioning from 0 holes to 1 hole, initialize starting position at target center with 0 size
-            if (currentHoleCount == 0 && targetCount > 0)
+            if (duration <= 0f || !isActiveAndEnabled)
+            {
+                SetHoles(holes);
+                return;
+            }
+
+            if (currentHoleCount == 0)
             {
                 for (int i = 0; i < targetCount; i++)
                 {
                     holeCenters[i] = holes[i].center;
                     holeSizes[i] = Vector4.zero;
-                    holeRadii[i] = holes[i].radius;
+                    holeRadii[i] = Mathf.Max(0f, holes[i].radius);
                 }
             }
-            
-            // Backup current state to lerp from
+
             Array.Copy(holeCenters, startCenters, MaxHoleCount);
             Array.Copy(holeSizes, startSizes, MaxHoleCount);
             Array.Copy(holeRadii, startRadii, MaxHoleCount);
 
-            // Prepare target arrays
-            Vector4[] targetCenters = new Vector4[MaxHoleCount];
-            Vector4[] targetSizes = new Vector4[MaxHoleCount];
-            float[] targetRadii = new float[MaxHoleCount];
-
-            for (int i = 0; i < targetCount; i++)
+            for (int i = 0; i < MaxHoleCount; i++)
             {
-                targetCenters[i] = holes[i].center;
-                targetSizes[i] = holes[i].size;
-                targetRadii[i] = holes[i].radius;
-            }
-
-            for (int i = targetCount; i < MaxHoleCount; i++)
-            {
-                targetCenters[i] = startCenters[i]; // shrink to current center
-                targetSizes[i] = Vector4.zero;      // size approaches zero
-                targetRadii[i] = 0f;
-            }
-
-            currentTween?.Kill();
-            
-            // We use DOTween.To to interpolate
-            currentTween = DOTween.To(() => 0f, t =>
-            {
-                for (int i = 0; i < maxActiveCount; i++)
+                if (i < targetCount)
                 {
-                    holeCenters[i] = Vector4.Lerp(startCenters[i], targetCenters[i], t);
-                    holeSizes[i] = Vector4.Lerp(startSizes[i], targetSizes[i], t);
-                    holeRadii[i] = Mathf.Lerp(startRadii[i], targetRadii[i], t);
+                    targetCenters[i] = holes[i].center;
+                    targetSizes[i] = holes[i].size;
+                    targetRadii[i] = Mathf.Max(0f, holes[i].radius);
                 }
-                ApplyProperties(maxActiveCount); // keep max active during transition
-            }, 1f, duration)
-            .SetEase(ease)
-            .OnComplete(() => ApplyProperties(targetCount)); // snap to target count at end
+                else
+                {
+                    targetCenters[i] = startCenters[i];
+                    targetSizes[i] = Vector4.zero;
+                    targetRadii[i] = 0f;
+                }
+            }
+
+            animationRoutine = StartCoroutine(AnimateRoutine(
+                duration,
+                activeCountDuringTransition,
+                targetCount));
         }
 
-        /// <summary>
-        /// Clear all active holes on the shader overlay.
-        /// </summary>
         public void ClearHoles()
         {
             SetHoles(null);
         }
 
+        private IEnumerator AnimateRoutine(
+            float duration,
+            int activeCountDuringTransition,
+            int targetCount)
+        {
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                float normalized = Mathf.Clamp01(elapsed / duration);
+                float t = animationCurve == null
+                    ? normalized
+                    : animationCurve.Evaluate(normalized);
+
+                for (int i = 0; i < activeCountDuringTransition; i++)
+                {
+                    holeCenters[i] = Vector4.LerpUnclamped(
+                        startCenters[i], targetCenters[i], t);
+                    holeSizes[i] = Vector4.LerpUnclamped(
+                        startSizes[i], targetSizes[i], t);
+                    holeRadii[i] = Mathf.LerpUnclamped(
+                        startRadii[i], targetRadii[i], t);
+                }
+
+                ApplyProperties(activeCountDuringTransition);
+                yield return null;
+            }
+
+            Array.Copy(targetCenters, holeCenters, MaxHoleCount);
+            Array.Copy(targetSizes, holeSizes, MaxHoleCount);
+            Array.Copy(targetRadii, holeRadii, MaxHoleCount);
+            ApplyProperties(targetCount);
+            animationRoutine = null;
+        }
+
+        private bool TryBuildHole(
+            RectTransform target,
+            float cornerRadius,
+            Vector2 padding,
+            out HoleData hole)
+        {
+            hole = default;
+            if (target == null || selfRectTransform == null)
+            {
+                return false;
+            }
+
+            Vector2 localPosition = selfRectTransform.InverseTransformPoint(target.position);
+            Vector2 size = target.rect.size + padding;
+            hole = new HoleData(localPosition, size, Mathf.Max(0f, cornerRadius));
+            return true;
+        }
+
         private void ApplyProperties(int count)
         {
-            currentHoleCount = count;
-
-            if (instantiatedMaterial == null && targetGraphic != null)
+            currentHoleCount = Mathf.Clamp(count, 0, MaxHoleCount);
+            if (materialInstance == null)
             {
-                instantiatedMaterial = targetGraphic.material;
+                return;
             }
 
-            if (instantiatedMaterial == null) return;
+            materialInstance.SetVectorArray(HoleCentersId, holeCenters);
+            materialInstance.SetVectorArray(HoleSizesId, holeSizes);
+            materialInstance.SetFloatArray(HoleRadiiId, holeRadii);
+            materialInstance.SetInt(HoleCountId, currentHoleCount);
+            if (materialInstance.HasProperty(SoftnessId))
+            {
+                materialInstance.SetFloat(SoftnessId, softness);
+            }
+            if (materialInstance.HasProperty(UseHoleId))
+            {
+                materialInstance.SetFloat(UseHoleId, currentHoleCount > 0 ? 1f : 0f);
+            }
+        }
 
-            instantiatedMaterial.SetVectorArray(HoleCentersID, holeCenters);
-            instantiatedMaterial.SetVectorArray(HoleSizesID, holeSizes);
-            instantiatedMaterial.SetFloatArray(HoleRadiiID, holeRadii);
-            instantiatedMaterial.SetInt(HoleCountID, count);
-            
-            if (instantiatedMaterial.HasProperty(SoftnessID))
+        private void StopAnimation()
+        {
+            if (animationRoutine == null)
             {
-                instantiatedMaterial.SetFloat(SoftnessID, softness);
+                return;
             }
-            
-            if (instantiatedMaterial.HasProperty(UseHoleID))
-            {
-                instantiatedMaterial.SetFloat(UseHoleID, count > 0 ? 1f : 0f);
-            }
+
+            StopCoroutine(animationRoutine);
+            animationRoutine = null;
+        }
+
+        private void OnDisable()
+        {
+            StopAnimation();
         }
 
         private void OnDestroy()
         {
-            currentTween?.Kill();
-            if (instantiatedMaterial != null)
+            StopAnimation();
+            if (targetGraphic != null && targetGraphic.material == materialInstance)
             {
-                Destroy(instantiatedMaterial);
-                instantiatedMaterial = null;
+                targetGraphic.material = originalMaterial;
+            }
+
+            if (materialInstance != null)
+            {
+                if (Application.isPlaying) Destroy(materialInstance);
+                else DestroyImmediate(materialInstance);
+                materialInstance = null;
             }
         }
     }

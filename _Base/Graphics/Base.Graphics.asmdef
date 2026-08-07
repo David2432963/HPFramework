@@ -1,0 +1,17 @@
+{
+    "name": "Base.Graphics",
+    "rootNamespace": "Base.Graphics",
+    "references": [
+        "_Base",
+        "Unity.UGUI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

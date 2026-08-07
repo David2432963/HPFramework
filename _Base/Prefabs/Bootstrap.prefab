@@ -51,7 +51,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: RootLifetimeScope, type: 3}
+  m_Script: {fileID: 11500000, guid: 50cb423bc8264e5bb1fa8dd58aa4750e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   audioManager: {fileID: 1140000000000001}
@@ -72,7 +72,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: AudioManager, type: 3}
+  m_Script: {fileID: 11500000, guid: 9cadfcb76e3499c478b268db0e250e04, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 
@@ -85,7 +85,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: UIManager, type: 3}
+  m_Script: {fileID: 11500000, guid: 4c0364226ec64144aa08fd01dce7fc75, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   screenCanvas: {fileID: 2240000000000001}
@@ -105,7 +105,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: InputManager, type: 3}
+  m_Script: {fileID: 11500000, guid: 6106bc0f600c7fe48ab58e9e5b72b9ea, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 
@@ -118,7 +118,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: GameSceneManager, type: 3}
+  m_Script: {fileID: 11500000, guid: a29e7a842158db943990b2487a4e4f6b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   defaultFakeLoadingDuration: 2
@@ -135,7 +135,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: PoolManager, type: 3}
+  m_Script: {fileID: 11500000, guid: 388ab1f11651afe49b7d3960f8535648, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   rootPoolParent: {fileID: 4000000000000002}
@@ -149,7 +149,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000000}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: HapticManager, type: 3}
+  m_Script: {fileID: 11500000, guid: edeaa5d9b40b9e14aa00fab41abc7c8b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
 
@@ -265,7 +265,7 @@ RectTransform:
   m_GameObject: {fileID: 1000000000000002}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 2240000000000001}
@@ -509,7 +509,7 @@ MonoBehaviour:
   m_GameObject: {fileID: 1000000000000006}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fe8764701c4238c42829313e44fe3720, type: 3}
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}

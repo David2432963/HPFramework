@@ -1,212 +1,259 @@
 using System;
 using System.Collections.Generic;
+using Base;
 using UnityEngine;
 using VContainer;
+using VContainer.Unity;
 using Base.Pooling;
 
-/// <summary>
-/// Global manager for caching and reusing GameObjects/Components.
-/// Implements IPoolService.
-/// Integrated with VContainer native atomic instantiation (Instantiate + Inject in 1 step).
-/// </summary>
-public sealed class PoolManager : MonoBehaviour, IPoolService
+public sealed class PoolManager : MonoBehaviour, IPoolService, IInitializable, IDisposable
 {
-    private class GameObjectPool
+    private sealed class GameObjectPool
     {
         private readonly GameObject prefab;
         private readonly Transform poolParent;
-        private readonly Stack<GameObject> inactiveInstances = new Stack<GameObject>();
-        private readonly Func<GameObject, Transform, GameObject> instantiator;
+        private readonly int capacity;
+        private readonly Stack<GameObject> inactive = new Stack<GameObject>();
+        private readonly HashSet<GameObject> inactiveSet = new HashSet<GameObject>();
+        private readonly HashSet<GameObject> allInstances = new HashSet<GameObject>();
+        private readonly Func<GameObject, Transform, GameObject> instantiate;
 
-        public GameObjectPool(GameObject prefab, Transform poolParent, Func<GameObject, Transform, GameObject> instantiator)
+        public GameObjectPool(GameObject prefab, Transform poolParent, int capacity,
+            Func<GameObject, Transform, GameObject> instantiate)
         {
             this.prefab = prefab;
             this.poolParent = poolParent;
-            this.instantiator = instantiator;
+            this.capacity = Mathf.Max(1, capacity);
+            this.instantiate = instantiate;
         }
 
         public GameObject Get(Transform parent)
         {
-            while (inactiveInstances.Count > 0)
+            GameObject instance = null;
+            while (inactive.Count > 0 && instance == null)
             {
-                GameObject instance = inactiveInstances.Pop();
-                if (instance != null)
-                {
-                    instance.transform.SetParent(parent, false);
-                    instance.SetActive(true);
-                    return instance;
-                }
+                instance = inactive.Pop();
+                inactiveSet.Remove(instance);
             }
 
-            return CreateInstance(parent);
-        }
-
-        public void Prewarm(int count)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                GameObject instance = CreateInstance(poolParent);
-                instance.SetActive(false);
-                inactiveInstances.Push(instance);
-            }
-        }
-
-        public void Release(GameObject instance)
-        {
             if (instance == null)
             {
-                return;
+                instance = instantiate(prefab, parent);
+                if (instance == null)
+                {
+                    throw new InvalidOperationException($"Failed to instantiate '{prefab.name}'.");
+                }
+                allInstances.Add(instance);
+            }
+            else
+            {
+                instance.transform.SetParent(parent, false);
             }
 
+            instance.SetActive(true);
+            InvokePoolables(instance, spawning: true);
+            return instance;
+        }
+
+        public IEnumerable<GameObject> Prewarm(int count)
+        {
+            int createCount = Mathf.Max(0, Mathf.Min(count, capacity) - inactiveSet.Count);
+            for (int i = 0; i < createCount; i++)
+            {
+                GameObject instance = instantiate(prefab, poolParent);
+                if (instance == null)
+                {
+                    throw new InvalidOperationException($"Failed to prewarm '{prefab.name}'.");
+                }
+
+                allInstances.Add(instance);
+                InvokePoolables(instance, spawning: false);
+                instance.SetActive(false);
+                inactive.Push(instance);
+                inactiveSet.Add(instance);
+                yield return instance;
+            }
+        }
+
+        public bool Release(GameObject instance)
+        {
+            if (instance == null || !allInstances.Contains(instance))
+            {
+                return false;
+            }
+
+            if (inactiveSet.Contains(instance))
+            {
+                BaseLog.LogWarning($"[Pool] Duplicate release ignored: {instance.name}");
+                return true;
+            }
+
+            InvokePoolables(instance, spawning: false);
             instance.SetActive(false);
+            if (inactiveSet.Count >= capacity)
+            {
+                allInstances.Remove(instance);
+                UnityEngine.Object.Destroy(instance);
+                return false;
+            }
+
             instance.transform.SetParent(poolParent, false);
-            inactiveInstances.Push(instance);
+            inactive.Push(instance);
+            inactiveSet.Add(instance);
+            return true;
         }
 
         public void Clear()
         {
-            while (inactiveInstances.Count > 0)
+            foreach (GameObject instance in allInstances)
             {
-                var instance = inactiveInstances.Pop();
                 if (instance != null)
                 {
                     UnityEngine.Object.Destroy(instance);
                 }
             }
 
+            allInstances.Clear();
+            inactive.Clear();
+            inactiveSet.Clear();
             if (poolParent != null)
             {
                 UnityEngine.Object.Destroy(poolParent.gameObject);
             }
         }
 
-        private GameObject CreateInstance(Transform parent)
+        private static void InvokePoolables(GameObject instance, bool spawning)
         {
-            return instantiator(prefab, parent);
+            MonoBehaviour[] behaviours = instance.GetComponentsInChildren<MonoBehaviour>(true);
+            for (int i = 0; i < behaviours.Length; i++)
+            {
+                if (behaviours[i] is IPoolable poolable)
+                {
+                    if (spawning) poolable.OnSpawn();
+                    else poolable.OnDespawn();
+                }
+            }
         }
     }
 
-    private readonly Dictionary<GameObject, GameObjectPool> pools = new Dictionary<GameObject, GameObjectPool>();
-    private readonly Dictionary<GameObject, GameObjectPool> instanceToPoolMap = new Dictionary<GameObject, GameObjectPool>();
     [SerializeField] private Transform rootPoolParent;
+    [SerializeField, Min(1)] private int maxInactiveInstancesPerPool = 64;
+
+    private readonly Dictionary<GameObject, GameObjectPool> pools =
+        new Dictionary<GameObject, GameObjectPool>();
+    private readonly Dictionary<GameObject, GameObjectPool> instanceToPool =
+        new Dictionary<GameObject, GameObjectPool>();
 
     private IObjectResolver objectResolver;
+    private bool initialized;
 
     [Inject]
-    public void Construct(IObjectResolver resolver)
-    {
-        objectResolver = resolver;
-    }
-
-    private void Awake()
-    {
-        Initialize();
-    }
+    public void Construct(IObjectResolver resolver) => objectResolver = resolver;
 
     public void Initialize()
     {
-        ClearAllPools();
+        if (initialized) return;
+        if (rootPoolParent == null)
+        {
+            GameObject root = new GameObject("PoolRoot");
+            root.transform.SetParent(transform, false);
+            rootPoolParent = root.transform;
+        }
+        initialized = true;
     }
 
     public GameObject Get(GameObject prefab, Transform parent = null)
     {
-        if (prefab == null)
-        {
-            return null;
-        }
-
-        var pool = GetOrCreatePool(prefab);
-        var instance = pool.Get(parent);
-        instanceToPoolMap[instance] = pool;
+        if (prefab == null) throw new ArgumentNullException(nameof(prefab));
+        EnsureInitialized();
+        GameObjectPool pool = GetOrCreatePool(prefab);
+        GameObject instance = pool.Get(parent);
+        instanceToPool[instance] = pool;
         return instance;
     }
 
     public T Get<T>(T prefab, Transform parent = null) where T : Component
     {
-        if (prefab == null)
-        {
-            return null;
-        }
-
-        var goInstance = Get(prefab.gameObject, parent);
-        return goInstance != null ? goInstance.GetComponent<T>() : null;
+        if (prefab == null) throw new ArgumentNullException(nameof(prefab));
+        GameObject instance = Get(prefab.gameObject, parent);
+        T component = instance.GetComponent<T>();
+        if (component != null) return component;
+        Release(instance);
+        throw new InvalidOperationException(
+            $"Pooled prefab '{prefab.name}' has no {typeof(T).Name} component.");
     }
 
     public void Release(GameObject instance)
     {
-        if (instance == null)
+        if (instance == null) return;
+        if (!instanceToPool.TryGetValue(instance, out GameObjectPool pool))
         {
+            UnityEngine.Object.Destroy(instance);
             return;
         }
 
-        if (instanceToPoolMap.TryGetValue(instance, out var pool))
+        if (!pool.Release(instance))
         {
-            instanceToPoolMap.Remove(instance);
-            pool.Release(instance);
-        }
-        else
-        {
-            UnityEngine.Object.Destroy(instance);
+            instanceToPool.Remove(instance);
         }
     }
 
     public void Release<T>(T instance) where T : Component
     {
-        if (instance == null)
-        {
-            return;
-        }
-        Release(instance.gameObject);
+        if (instance != null) Release(instance.gameObject);
     }
 
     public void Prewarm(GameObject prefab, int count)
     {
-        if (prefab == null || count <= 0)
+        if (prefab == null) throw new ArgumentNullException(nameof(prefab));
+        if (count <= 0) return;
+        EnsureInitialized();
+        GameObjectPool pool = GetOrCreatePool(prefab);
+        foreach (GameObject instance in pool.Prewarm(count))
         {
-            return;
+            instanceToPool[instance] = pool;
         }
-
-        var pool = GetOrCreatePool(prefab);
-        pool.Prewarm(count);
     }
 
     public void Prewarm<T>(T prefab, int count) where T : Component
     {
-        if (prefab == null)
-        {
-            return;
-        }
+        if (prefab == null) throw new ArgumentNullException(nameof(prefab));
         Prewarm(prefab.gameObject, count);
-    }
-
-    private GameObject InstantiateWithVContainer(GameObject prefab, Transform parent)
-    {
-        if (objectResolver != null)
-        {
-            return objectResolver.Instantiate(prefab, parent);
-        }
-        return Instantiate(prefab, parent, false);
-    }
-
-    private GameObjectPool GetOrCreatePool(GameObject prefab)
-    {
-        if (!pools.TryGetValue(prefab, out var pool))
-        {
-            var poolParentGo = new GameObject($"Pool_{prefab.name}");
-            poolParentGo.transform.SetParent(rootPoolParent != null ? rootPoolParent : transform);
-            pool = new GameObjectPool(prefab, poolParentGo.transform, InstantiateWithVContainer);
-            pools[prefab] = pool;
-        }
-        return pool;
     }
 
     public void ClearAllPools()
     {
-        foreach (var pool in pools.Values)
-        {
-            pool.Clear();
-        }
+        foreach (GameObjectPool pool in pools.Values) pool.Clear();
         pools.Clear();
-        instanceToPoolMap.Clear();
+        instanceToPool.Clear();
+    }
+
+    public void Dispose()
+    {
+        ClearAllPools();
+        initialized = false;
+    }
+
+    private GameObjectPool GetOrCreatePool(GameObject prefab)
+    {
+        if (pools.TryGetValue(prefab, out GameObjectPool pool)) return pool;
+        GameObject parentObject = new GameObject($"Pool_{prefab.name}");
+        parentObject.transform.SetParent(rootPoolParent, false);
+        pool = new GameObjectPool(prefab, parentObject.transform,
+            maxInactiveInstancesPerPool, InstantiateWithVContainer);
+        pools.Add(prefab, pool);
+        return pool;
+    }
+
+    private GameObject InstantiateWithVContainer(GameObject prefab, Transform parent)
+    {
+        return objectResolver != null
+            ? objectResolver.Instantiate(prefab, parent)
+            : Instantiate(prefab, parent, false);
+    }
+
+    private void EnsureInitialized()
+    {
+        if (!initialized) Initialize();
     }
 }

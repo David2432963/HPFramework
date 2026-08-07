@@ -1,50 +1,214 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine;
-using UnityEngine.SceneManagement;
-using VContainer;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using Base;
+using UnityEngine.SceneManagement;
+
+public enum ProcedureTransitionState
+{
+    Idle,
+    Exiting,
+    Entering,
+    Failed
+}
 
 /// <summary>
-/// Game Procedure State Machine managed by VContainer.
-/// Uses VContainer IObjectResolver to resolve Procedure instances, allowing Procedure states to use Constructor Injection.
+/// Explicit procedure state machine. Procedures must be registered in a LifetimeScope as Procedure.
+/// No assembly scanning, Activator fallback or service locator is used.
 /// </summary>
-public sealed class ProcedureManager
+public sealed class ProcedureManager : IProcedureService, IDisposable
 {
-    private readonly Dictionary<Type, Procedure> procedures = new();
-    private readonly IObjectResolver objectResolver;
+    private readonly Dictionary<Type, Procedure> procedures = new Dictionary<Type, Procedure>();
+    private readonly SemaphoreSlim transitionGate = new SemaphoreSlim(1, 1);
+
     private IProcedureSceneLoader sceneLoader;
     private Procedure currentProcedure;
-
-    public Procedure CurrentProcedure => currentProcedure;
+    private bool disposed;
 
     private string targetSceneName;
     private Type targetProcedureType;
     private float targetFakeLoadingDuration;
 
+    public Procedure CurrentProcedure => currentProcedure;
+    public ProcedureTransitionState TransitionState { get; private set; } = ProcedureTransitionState.Idle;
+    public Exception LastTransitionException { get; private set; }
+
     public string TargetSceneName => targetSceneName;
     public Type TargetProcedureType => targetProcedureType;
     public float TargetFakeLoadingDuration => targetFakeLoadingDuration;
 
-    public ProcedureManager(IObjectResolver objectResolver, IProcedureSceneLoader sceneLoader = null)
+    public event Action<Type, Type> TransitionStarted;
+    public event Action<Procedure> TransitionCompleted;
+    public event Action<Type, Exception> TransitionFailed;
+
+    public ProcedureManager(IEnumerable<Procedure> registeredProcedures)
     {
-        this.objectResolver = objectResolver;
-        this.sceneLoader = sceneLoader;
-        RegisterAllProcedures();
+        if (registeredProcedures == null)
+        {
+            return;
+        }
+
+        foreach (Procedure procedure in registeredProcedures)
+        {
+            RegisterProcedure(procedure);
+        }
     }
 
     public void RegisterSceneLoader(IProcedureSceneLoader loader)
     {
-        if (loader == null)
-        {
-            throw new ArgumentNullException(nameof(loader));
-        }
-
-        sceneLoader = loader;
+        ThrowIfDisposed();
+        sceneLoader = loader ?? throw new ArgumentNullException(nameof(loader));
     }
 
-    public Coroutine LoadTargetSceneAsync(Action<Scene> onLoaded = null)
+    public void RegisterProcedure(Procedure procedure)
     {
+        ThrowIfDisposed();
+        if (procedure == null)
+        {
+            throw new ArgumentNullException(nameof(procedure));
+        }
+
+        Type type = procedure.GetType();
+        if (procedures.ContainsKey(type))
+        {
+            throw new InvalidOperationException($"Procedure '{type.FullName}' is already registered.");
+        }
+
+        procedure.Initialize(this);
+        procedures.Add(type, procedure);
+    }
+
+    public bool IsRegistered<T>() where T : Procedure
+    {
+        return procedures.ContainsKey(typeof(T));
+    }
+
+    public void ChangeState<T>() where T : Procedure
+    {
+        ChangeState(typeof(T));
+    }
+
+    public void ChangeState(Type procedureType)
+    {
+        ThrowIfDisposed();
+        Procedure nextProcedure = GetRequiredProcedure(procedureType);
+        if (ReferenceEquals(currentProcedure, nextProcedure))
+        {
+            return;
+        }
+
+        if (TransitionState == ProcedureTransitionState.Exiting || TransitionState == ProcedureTransitionState.Entering)
+        {
+            throw new InvalidOperationException("A procedure transition is already running. Use ChangeStateAsync to queue transitions safely.");
+        }
+
+        Procedure previous = currentProcedure;
+        LastTransitionException = null;
+        TransitionStarted?.Invoke(previous?.GetType(), procedureType);
+
+        try
+        {
+            TransitionState = ProcedureTransitionState.Exiting;
+            previous?.OnExit();
+
+            TransitionState = ProcedureTransitionState.Entering;
+            currentProcedure = nextProcedure;
+            nextProcedure.OnEnter();
+
+            TransitionState = ProcedureTransitionState.Idle;
+            TransitionCompleted?.Invoke(nextProcedure);
+            BaseLog.Log($"[ProcedureManager] Transitioned to state: {procedureType.Name}");
+        }
+        catch (Exception exception)
+        {
+            currentProcedure = previous;
+            LastTransitionException = exception;
+            TransitionState = ProcedureTransitionState.Failed;
+            TransitionFailed?.Invoke(procedureType, exception);
+            throw;
+        }
+    }
+
+    public UniTask ChangeStateAsync<T>(CancellationToken cancellationToken = default) where T : Procedure
+    {
+        return ChangeStateAsync(typeof(T), cancellationToken);
+    }
+
+    public async UniTask ChangeStateAsync(Type procedureType, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        Procedure nextProcedure = GetRequiredProcedure(procedureType);
+        if (ReferenceEquals(currentProcedure, nextProcedure))
+        {
+            return;
+        }
+
+        await transitionGate.WaitAsync(cancellationToken);
+        Procedure previous = currentProcedure;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ReferenceEquals(currentProcedure, nextProcedure))
+            {
+                return;
+            }
+
+            previous = currentProcedure;
+            LastTransitionException = null;
+            TransitionStarted?.Invoke(previous?.GetType(), procedureType);
+
+            TransitionState = ProcedureTransitionState.Exiting;
+            if (previous != null)
+            {
+                await previous.OnExitAsync(cancellationToken);
+            }
+
+            TransitionState = ProcedureTransitionState.Entering;
+            currentProcedure = nextProcedure;
+            await nextProcedure.OnEnterAsync(cancellationToken);
+
+            TransitionState = ProcedureTransitionState.Idle;
+            TransitionCompleted?.Invoke(nextProcedure);
+            BaseLog.Log($"[ProcedureManager] Transitioned to state: {procedureType.Name}");
+        }
+        catch (Exception exception)
+        {
+            currentProcedure = previous;
+            LastTransitionException = exception;
+            TransitionState = ProcedureTransitionState.Failed;
+            TransitionFailed?.Invoke(procedureType, exception);
+            throw;
+        }
+        finally
+        {
+            transitionGate.Release();
+        }
+    }
+
+    public void LoadProcedure<TTarget, TLoading>(string sceneName, float fakeLoadingDuration = 0f)
+        where TTarget : Procedure
+        where TLoading : Procedure
+    {
+        if (string.IsNullOrWhiteSpace(sceneName))
+        {
+            throw new ArgumentException("A target scene name is required.", nameof(sceneName));
+        }
+
+        if (!IsRegistered<TTarget>())
+        {
+            throw new InvalidOperationException($"Target procedure '{typeof(TTarget).FullName}' is not registered.");
+        }
+
+        targetSceneName = sceneName;
+        targetProcedureType = typeof(TTarget);
+        targetFakeLoadingDuration = Math.Max(0f, fakeLoadingDuration);
+        ChangeState<TLoading>();
+    }
+
+    public async UniTask<Scene> LoadTargetSceneAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
         if (sceneLoader == null)
         {
             throw new InvalidOperationException("A procedure scene loader must be registered before loading a target scene.");
@@ -55,225 +219,59 @@ public sealed class ProcedureManager
             throw new InvalidOperationException("A target scene must be assigned before entering the loading procedure.");
         }
 
-        return sceneLoader.LoadSceneAsync(targetSceneName, targetFakeLoadingDuration, onLoaded);
+        return await sceneLoader.LoadSceneAsync(targetSceneName, targetFakeLoadingDuration, cancellationToken);
     }
 
-    public void RegisterProcedure(Procedure procedure)
+    public UniTask EnterTargetProcedureAsync(CancellationToken cancellationToken = default)
     {
-        if (procedure == null) return;
-        var type = procedure.GetType();
-        if (!procedures.ContainsKey(type))
+        if (targetProcedureType == null)
         {
-            procedure.Initialize(this);
-            procedures[type] = procedure;
+            throw new InvalidOperationException("No target procedure has been configured.");
         }
+
+        return ChangeStateAsync(targetProcedureType, cancellationToken);
     }
 
-    public void RegisterProcedure<T>() where T : Procedure
-    {
-        var type = typeof(T);
-        if (!procedures.ContainsKey(type))
-        {
-            Procedure procedure = null;
-            if (objectResolver != null)
-            {
-                try
-                {
-                    procedure = objectResolver.Resolve<T>();
-                }
-                catch
-                {
-                    // Fallback to activator if not registered in scope
-                    procedure = Activator.CreateInstance<T>();
-                }
-            }
-            else
-            {
-                procedure = Activator.CreateInstance<T>();
-            }
-
-            procedure.Initialize(this);
-            procedures[type] = procedure;
-        }
-    }
-
-    public void ChangeState<T>() where T : Procedure
-    {
-        ChangeState(typeof(T));
-    }
-
-    public void ChangeState(Type procedureType)
+    private Procedure GetRequiredProcedure(Type procedureType)
     {
         if (procedureType == null)
         {
             throw new ArgumentNullException(nameof(procedureType));
         }
 
-        if (currentProcedure != null && currentProcedure.GetType() == procedureType)
+        if (!typeof(Procedure).IsAssignableFrom(procedureType))
+        {
+            throw new ArgumentException($"Type '{procedureType.FullName}' is not a Procedure.", nameof(procedureType));
+        }
+
+        if (!procedures.TryGetValue(procedureType, out Procedure procedure))
+        {
+            throw new InvalidOperationException(
+                $"Procedure '{procedureType.FullName}' is not registered. Register it with builder.Register<T>(Lifetime.Singleton).As<Procedure>().AsSelf().");
+        }
+
+        return procedure;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (disposed)
+        {
+            throw new ObjectDisposedException(nameof(ProcedureManager));
+        }
+    }
+
+    public void Dispose()
+    {
+        if (disposed)
         {
             return;
         }
 
-        if (!procedures.TryGetValue(procedureType, out var nextProcedure))
-        {
-            // Try resolving dynamically via VContainer
-            if (objectResolver != null)
-            {
-                try
-                {
-                    nextProcedure = (Procedure)objectResolver.Resolve(procedureType);
-                    nextProcedure.Initialize(this);
-                    procedures[procedureType] = nextProcedure;
-                }
-                catch (Exception ex)
-                {
-                    BaseLog.LogError($"[ProcedureManager] Failed to resolve procedure '{procedureType.Name}' via VContainer: {ex.Message}");
-                }
-            }
-        }
-
-        if (nextProcedure != null)
-        {
-            currentProcedure?.OnExit();
-            currentProcedure = nextProcedure;
-            BaseLog.Log($"[ProcedureManager] Transitioned to state: {procedureType.Name}");
-            currentProcedure.OnEnter();
-        }
-        else
-        {
-            BaseLog.LogError($"[ProcedureManager] Procedure of type '{procedureType.Name}' is not registered!");
-        }
-    }
-
-    public Cysharp.Threading.Tasks.UniTask ChangeStateAsync<T>(System.Threading.CancellationToken cancellationToken = default) where T : Procedure
-    {
-        return ChangeStateAsync(typeof(T), cancellationToken);
-    }
-
-    public async Cysharp.Threading.Tasks.UniTask ChangeStateAsync(Type procedureType, System.Threading.CancellationToken cancellationToken = default)
-    {
-        if (procedureType == null)
-        {
-            throw new ArgumentNullException(nameof(procedureType));
-        }
-
-        if (currentProcedure != null && currentProcedure.GetType() == procedureType)
-        {
-            return;
-        }
-
-        if (!procedures.TryGetValue(procedureType, out var nextProcedure))
-        {
-            if (objectResolver != null)
-            {
-                try
-                {
-                    nextProcedure = (Procedure)objectResolver.Resolve(procedureType);
-                    nextProcedure.Initialize(this);
-                    procedures[procedureType] = nextProcedure;
-                }
-                catch (Exception ex)
-                {
-                    BaseLog.LogError($"[ProcedureManager] Failed to resolve procedure '{procedureType.Name}' via VContainer: {ex.Message}");
-                }
-            }
-        }
-
-        if (nextProcedure != null)
-        {
-            if (currentProcedure != null)
-            {
-                await currentProcedure.OnExitAsync(cancellationToken);
-            }
-            currentProcedure = nextProcedure;
-            BaseLog.Log($"[ProcedureManager] Transitioned to state: {procedureType.Name}");
-            await currentProcedure.OnEnterAsync(cancellationToken);
-        }
-        else
-        {
-            BaseLog.LogError($"[ProcedureManager] Procedure of type '{procedureType.Name}' is not registered!");
-        }
-    }
-
-    public void LoadProcedure<TTarget, TLoading>(string sceneName, float fakeLoadingDuration = 0f) 
-        where TTarget : Procedure 
-        where TLoading : Procedure
-    {
-        if (string.IsNullOrWhiteSpace(sceneName))
-        {
-            throw new ArgumentException("A target scene name is required.", nameof(sceneName));
-        }
-
-        targetSceneName = sceneName;
-        targetProcedureType = typeof(TTarget);
-        targetFakeLoadingDuration = fakeLoadingDuration;
-        ChangeState<TLoading>();
-    }
-
-    private void RegisterAllProcedures()
-    {
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            string name = assembly.FullName;
-            if (name.StartsWith("System") || name.StartsWith("Microsoft") || 
-                name.StartsWith("Unity") || name.StartsWith("mscorlib") ||
-                name.StartsWith("Mono.") || name.StartsWith("Newtonsoft") ||
-                name.StartsWith("VContainer") || name.StartsWith("DOTween") ||
-                name.StartsWith("netstandard") || name.StartsWith("nunit") ||
-                name.StartsWith("ExCSS") || name.StartsWith("JetBrains"))
-            {
-                continue;
-            }
-
-            try
-            {
-                var types = assembly.GetTypes();
-                foreach (var type in types)
-                {
-                    if (type.IsClass && !type.IsAbstract && typeof(Procedure).IsAssignableFrom(type))
-                    {
-                        Procedure procedure = null;
-                        if (objectResolver != null)
-                        {
-                            try
-                            {
-                                procedure = (Procedure)objectResolver.Resolve(type);
-                            }
-                            catch
-                            {
-                                try
-                                {
-                                    procedure = (Procedure)Activator.CreateInstance(type);
-                                }
-                                catch (Exception ex)
-                                {
-                                    BaseLog.LogWarning($"[ProcedureManager] Could not instantiate procedure '{type.Name}'. If it uses constructor injection, register it in RootLifetimeScope: {ex.Message}");
-                                }
-                            }
-                        }
-                        else
-                        {
-                            try
-                            {
-                                procedure = (Procedure)Activator.CreateInstance(type);
-                            }
-                            catch (Exception ex)
-                            {
-                                BaseLog.LogWarning($"[ProcedureManager] Could not instantiate procedure '{type.Name}': {ex.Message}");
-                            }
-                        }
-
-                        if (procedure != null)
-                        {
-                            RegisterProcedure(procedure);
-                        }
-                    }
-                }
-            }
-            catch (Exception exception)
-            {
-                BaseLog.LogWarning($"[ProcedureManager] Could not inspect assembly '{name}' while registering procedures: {exception.Message}");
-            }
-        }
+        disposed = true;
+        transitionGate.Dispose();
+        procedures.Clear();
+        sceneLoader = null;
+        currentProcedure = null;
     }
 }

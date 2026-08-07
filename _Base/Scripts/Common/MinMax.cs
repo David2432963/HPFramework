@@ -49,7 +49,7 @@ namespace Base.Common
             this.max = max;
         }
 
-        public float Clamp(int value)
+        public int Clamp(int value)
         {
             return Mathf.Clamp(value, min, max);
         }

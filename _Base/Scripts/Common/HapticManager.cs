@@ -1,26 +1,22 @@
+using System;
 using UnityEngine;
 using VContainer;
+using VContainer.Unity;
 using Base.Common;
 using Base.Persistence;
-using Base;
 
 /// <summary>
-/// Global manager for controlling device vibration and haptics.
-/// Implements IHapticService managed by VContainer.
+/// Haptic adapter driven by the shared settings service.
 /// </summary>
-public sealed class HapticManager : MonoBehaviour, IHapticService
+public sealed class HapticManager : MonoBehaviour, IHapticService, IInitializable, IDisposable
 {
+    private ISettingsService settingsService;
     private bool isHapticEnabled = true;
-    private ISettingsProvider settingsProvider;
 
     [Inject]
-    public void Construct(ISettingsProvider settingsProvider)
+    public void Construct(ISettingsService settingsService)
     {
-        this.settingsProvider = settingsProvider;
-        if (settingsProvider != null)
-        {
-            isHapticEnabled = settingsProvider.VibrationEnabled;
-        }
+        this.settingsService = settingsService;
     }
 
     public bool IsHapticEnabled
@@ -34,50 +30,58 @@ public sealed class HapticManager : MonoBehaviour, IHapticService
             }
 
             isHapticEnabled = value;
-            PlayerPrefs.SetInt(BaseConstants.HapticPrefsKey, isHapticEnabled ? 1 : 0);
-            PlayerPrefs.Save();
+            if (settingsService != null)
+            {
+                settingsService.VibrationEnabled = value;
+            }
         }
     }
 
     public void Initialize()
     {
-        if (settingsProvider != null)
+        if (settingsService == null)
         {
-            isHapticEnabled = settingsProvider.VibrationEnabled;
+            return;
         }
-        else
-        {
-            isHapticEnabled = PlayerPrefs.GetInt(BaseConstants.HapticPrefsKey, 1) == 1;
-        }
+
+        isHapticEnabled = settingsService.VibrationEnabled;
+        settingsService.SettingChanged -= OnSettingChanged;
+        settingsService.SettingChanged += OnSettingChanged;
     }
 
     public void VibrateShort()
     {
-        if (!isHapticEnabled)
-        {
-            return;
-        }
-
-        VibrationHelper.Vibrate(30);
+        VibrateCustom(30);
     }
 
     public void VibrateLong()
     {
-        if (!isHapticEnabled)
-        {
-            return;
-        }
-
-        VibrationHelper.Vibrate(150);
+        VibrateCustom(150);
     }
 
     public void VibrateCustom(long milliseconds)
     {
-        if (!isHapticEnabled)
+        if (!isHapticEnabled || milliseconds <= 0)
         {
             return;
         }
 
         VibrationHelper.Vibrate(milliseconds);
+    }
+
+    public void Dispose()
+    {
+        if (settingsService != null)
+        {
+            settingsService.SettingChanged -= OnSettingChanged;
+        }
+    }
+
+    private void OnSettingChanged(string settingName)
+    {
+        if (settingName == nameof(ISettingsProvider.VibrationEnabled))
+        {
+            isHapticEnabled = settingsService.VibrationEnabled;
+        }
     }
 }

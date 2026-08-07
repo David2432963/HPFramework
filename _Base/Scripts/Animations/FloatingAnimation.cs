@@ -1,97 +1,101 @@
+using System.Collections;
 using UnityEngine;
-using DG.Tweening;
 
 namespace Base.Animations
 {
     /// <summary>
-    /// Creates a continuous floating (up/down) and rotating animation using DOTween.
-    /// Can be attached to any GameObject (3D or UI).
+    /// Lightweight floating and rotation animation without external tween dependencies.
     /// </summary>
-    public class FloatingAnimation : MonoBehaviour
+    public sealed class FloatingAnimation : MonoBehaviour
     {
         [Header("Float Settings")]
         [SerializeField] private bool enableFloat = true;
         [SerializeField] private float floatDistance = 0.5f;
-        [SerializeField] private float floatDuration = 1.5f;
-        [SerializeField] private Ease floatEase = Ease.InOutSine;
+        [SerializeField, Min(0.01f)] private float floatDuration = 1.5f;
+        [SerializeField] private AnimationCurve floatCurve =
+            AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
         [Header("Rotation Settings")]
         [SerializeField] private bool enableRotation = true;
-        [SerializeField] private Vector3 rotationAngle = new Vector3(0, 360, 0);
-        [SerializeField] private float rotationDuration = 3f;
-        [SerializeField] private RotateMode rotateMode = RotateMode.FastBeyond360;
-        [SerializeField] private Ease rotationEase = Ease.Linear;
+        [SerializeField] private Vector3 rotationPerCycle = new Vector3(0f, 360f, 0f);
+        [SerializeField, Min(0.01f)] private float rotationDuration = 3f;
 
-        private Tween floatTween;
-        private Tween rotateTween;
+        [Header("Timing")]
+        [SerializeField] private bool useUnscaledTime = true;
+
         private Vector3 startPosition;
-        private bool isInitialized;
+        private Quaternion startRotation;
+        private Coroutine animationRoutine;
+        private bool initialized;
 
-        private void Start()
+        private void Awake()
         {
-            startPosition = transform.localPosition;
-            isInitialized = true;
-            StartAnimations();
+            CaptureStartState();
         }
 
         private void OnEnable()
         {
-            if (isInitialized)
-            {
-                // Prevent snapping if it's already running
-                StartAnimations();
-            }
+            CaptureStartState();
+            animationRoutine = StartCoroutine(Animate());
         }
 
         private void OnDisable()
         {
-            KillTweens();
-            if (isInitialized)
+            if (animationRoutine != null)
+            {
+                StopCoroutine(animationRoutine);
+                animationRoutine = null;
+            }
+
+            if (initialized)
             {
                 transform.localPosition = startPosition;
+                transform.localRotation = startRotation;
             }
         }
 
-        private void OnDestroy()
+        private void CaptureStartState()
         {
-            KillTweens();
+            if (initialized)
+            {
+                return;
+            }
+
+            startPosition = transform.localPosition;
+            startRotation = transform.localRotation;
+            initialized = true;
         }
 
-        private void StartAnimations()
+        private IEnumerator Animate()
         {
-            KillTweens();
+            float floatTime = 0f;
+            float rotationTime = 0f;
+            while (true)
+            {
+                float deltaTime = useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
 
-            if (enableFloat)
-            {
-                floatTween = transform.DOLocalMoveY(startPosition.y + floatDistance, floatDuration)
-                    .SetEase(floatEase)
-                    .SetLoops(-1, LoopType.Yoyo)
-                    .SetUpdate(true);
-            }
+                if (enableFloat)
+                {
+                    floatTime += deltaTime;
+                    float phase = Mathf.Repeat(floatTime / Mathf.Max(0.01f, floatDuration), 2f);
+                    float normalized = phase <= 1f ? phase : 2f - phase;
+                    float evaluated = floatCurve == null
+                        ? normalized
+                        : floatCurve.Evaluate(normalized);
+                    transform.localPosition = startPosition + Vector3.up * (evaluated * floatDistance);
+                }
 
-            if (enableRotation)
-            {
-                rotateTween = transform.DOLocalRotate(rotationAngle, rotationDuration, rotateMode)
-                    .SetEase(rotationEase)
-                    .SetLoops(-1, LoopType.Restart)
-                    .SetRelative(true)
-                    .SetUpdate(true);
-            }
-        }
+                if (enableRotation)
+                {
+                    rotationTime += deltaTime;
+                    float normalized = Mathf.Repeat(
+                        rotationTime / Mathf.Max(0.01f, rotationDuration),
+                        1f);
+                    transform.localRotation = startRotation * Quaternion.Euler(rotationPerCycle * normalized);
+                }
 
-        private void KillTweens()
-        {
-            if (floatTween != null && floatTween.IsActive())
-            {
-                floatTween.Kill();
+                yield return null;
             }
-            if (rotateTween != null && rotateTween.IsActive())
-            {
-                rotateTween.Kill();
-            }
-            
-            floatTween = null;
-            rotateTween = null;
         }
     }
 }

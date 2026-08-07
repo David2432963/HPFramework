@@ -243,7 +243,16 @@ namespace Base.Extensions
 
             while (trans.childCount != 0)
             {
-                Object.DestroyImmediate(trans.GetChild(0).gameObject);
+                GameObject child = trans.GetChild(0).gameObject;
+                child.transform.SetParent(null, false);
+                if (Application.isPlaying)
+                {
+                    Object.Destroy(child);
+                }
+                else
+                {
+                    Object.DestroyImmediate(child);
+                }
             }
         }
 

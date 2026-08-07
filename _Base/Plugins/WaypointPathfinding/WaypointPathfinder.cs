@@ -3,7 +3,7 @@ using UnityEngine;
 
 /// <summary>
 /// A* pathfinder operating on a WaypointGraph.
-/// Pure C# class — no MonoBehaviour dependency.
+/// Pure C# class â€” no MonoBehaviour dependency.
 /// Reuses internal collections across calls to avoid GC allocations.
 ///
 /// Usage:
@@ -31,6 +31,8 @@ public sealed class WaypointPathfinder
     /// <returns>True if a path was found (or start == goal), false otherwise.</returns>
     public bool TryFindPath(WaypointGraph graph, WaypointNode start, WaypointNode goal, List<WaypointNode> resultPath)
     {
+        if (resultPath == null) throw new System.ArgumentNullException(nameof(resultPath));
+
         resultPath.Clear();
 
         if (graph == null || start == null || goal == null)

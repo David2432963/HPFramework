@@ -1,21 +1,20 @@
+using System;
+using System.Collections;
 using System.Collections.Generic;
+using Base;
 using UnityEngine;
-using DG.Tweening;
 using VContainer;
+using VContainer.Unity;
 using Base.Audio;
 using Base.Persistence;
-using Base;
-
-using Sirenix.OdinInspector;
 
 /// <summary>
-/// Global audio service for music and SFX.
-/// Managed as a VContainer component implementing IAudioService.
-/// Uses Odin Inspector attributes for rich editor formatting.
+/// Global music and SFX service. Uses Unity coroutines for fades so the core package has no
+/// DOTween dependency, and mirrors all mutable values through ISettingsService.
 /// </summary>
-public class AudioManager : MonoBehaviour, IAudioService
+public sealed class AudioManager : MonoBehaviour, IAudioService, IInitializable, IDisposable
 {
-    [System.Serializable]
+    [Serializable]
     public struct AudioSettingsData
     {
         public bool MusicMuted;
@@ -24,162 +23,133 @@ public class AudioManager : MonoBehaviour, IAudioService
         public float SfxVolume;
     }
 
-    [Title("🎵 Audio Sources")]
+    [Header("Audio Sources")]
     [SerializeField] private AudioSource musicSource;
     [SerializeField] private AudioSource sfxSource;
 
-    [Title("🔊 Volume Settings")]
+    [Header("Volume Settings")]
     [SerializeField] private bool musicMuted;
-    [SerializeField, Range(0f, 1f), ProgressBar(0, 1)] private float musicVolume = 1f;
+    [SerializeField, Range(0f, 1f)] private float musicVolume = 1f;
     [SerializeField] private bool sfxMuted;
-    [SerializeField, Range(0f, 1f), ProgressBar(0, 1)] private float sfxVolume = 1f;
+    [SerializeField, Range(0f, 1f)] private float sfxVolume = 1f;
 
-    [Title("SFX Channel Pool")]
-    [SerializeField, MinValue(1)] private int sfxChannelCount = 10;
-    [SerializeField, MinValue(1)] private int maxSfxChannelCount = 30;
+    [Header("SFX Channel Pool")]
+    [SerializeField, Min(1)] private int sfxChannelCount = 10;
+    [SerializeField, Min(1)] private int maxSfxChannelCount = 30;
 
-    [Title("Audio Database")]
-    [SerializeField, InlineEditor] private AudioLibrarySO audioLibrary;
+    [Header("Audio Database")]
+    [SerializeField] private AudioLibrarySO audioLibrary;
 
     private readonly List<AudioSource> sfxChannels = new List<AudioSource>();
     private readonly List<float> sfxChannelVolumeScales = new List<float>();
+    private readonly Dictionary<string, int> clusterSequentialIndices =
+        new Dictionary<string, int>(StringComparer.Ordinal);
+
+    private ISettingsService settingsService;
+    private Coroutine musicFadeRoutine;
     private float musicVolumeScale = 1f;
-    private Tween musicFadeTween;
+    private bool initialized;
 
     private AudioClip pausedMusicClip;
     private float pausedMusicTime;
     private float pausedMusicVolumeScale;
     private bool hasPausedMusic;
 
-    private readonly Dictionary<string, int> clusterSequentialIndices = new Dictionary<string, int>();
-    private ISettingsProvider settingsProvider;
-
     public bool IsMusicPlaying => musicSource != null && musicSource.isPlaying;
     public bool IsMusicMuted => musicMuted;
     public bool IsSfxMuted => sfxMuted;
 
     [Inject]
-    public void Construct(ISettingsProvider settingsProvider, AudioLibrarySO library = null)
+    public void Construct(ISettingsService settingsService)
     {
-        this.settingsProvider = settingsProvider;
-        if (library != null)
-        {
-            this.audioLibrary = library;
-            this.audioLibrary.InitializeLookup();
-        }
-
-        SyncWithSettings();
-    }
-
-    private void Awake()
-    {
-        Initialize();
+        this.settingsService = settingsService;
     }
 
     public void Initialize()
     {
-        sfxChannelCount = Mathf.Clamp(sfxChannelCount, 1, Mathf.Max(1, maxSfxChannelCount));
-        maxSfxChannelCount = Mathf.Max(1, maxSfxChannelCount);
-        EnsureAudioSources();
-
-        SyncWithSettings();
-        ApplySettings();
-        InitializeSfxPool();
-    }
-
-    private void SyncWithSettings()
-    {
-        if (settingsProvider != null)
-        {
-            musicMuted = !settingsProvider.MusicEnabled;
-            musicVolume = settingsProvider.MusicVolume;
-            sfxMuted = !settingsProvider.SoundEnabled;
-            sfxVolume = settingsProvider.SoundVolume;
-        }
-    }
-
-    public void ConfigureLibrary(AudioLibrarySO library)
-    {
-        if (library == null)
-        {
-            throw new System.ArgumentNullException(nameof(library));
-        }
-
-        audioLibrary = library;
-        audioLibrary.InitializeLookup();
-    }
-
-    private void InitializeSfxPool()
-    {
-        if (sfxChannels.Count > 0)
+        if (initialized)
         {
             return;
         }
 
-        sfxChannelVolumeScales.Clear();
-        for (int i = 0; i < sfxChannelCount; i++)
+        maxSfxChannelCount = Mathf.Max(1, maxSfxChannelCount);
+        sfxChannelCount = Mathf.Clamp(sfxChannelCount, 1, maxSfxChannelCount);
+        EnsureAudioSources();
+        audioLibrary?.InitializeLookup();
+        InitializeSfxPool();
+
+        if (settingsService != null)
         {
-            var channelGo = new GameObject($"SfxChannel_{i}");
-            channelGo.transform.SetParent(transform);
-            var source = channelGo.AddComponent<AudioSource>();
-            source.playOnAwake = false;
-            source.loop = false;
-            sfxChannels.Add(source);
-            sfxChannelVolumeScales.Add(1f);
+            settingsService.SettingChanged -= OnSettingChanged;
+            settingsService.SettingChanged += OnSettingChanged;
+            SyncWithSettings();
         }
+
+        ApplySettings();
+        initialized = true;
     }
 
-    private void KillMusicFadeTween()
+    public void ConfigureLibrary(AudioLibrarySO library)
     {
-        if (musicFadeTween != null)
-        {
-            musicFadeTween.Kill();
-            musicFadeTween = null;
-        }
+        audioLibrary = library ?? throw new ArgumentNullException(nameof(library));
+        audioLibrary.InitializeLookup();
     }
 
-    public void PlayMusic(AudioClip clip, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f, float startTime = 0f)
+    public void PlayMusic(
+        AudioClip clip,
+        bool loop = true,
+        float fadeDuration = 0.5f,
+        float volumeScale = 1f,
+        float startTime = 0f)
     {
         if (clip == null)
         {
             return;
         }
 
-        EnsureAudioSources();
-        KillMusicFadeTween();
-
-        musicVolumeScale = volumeScale;
-        float targetVolume = (musicMuted ? 0f : musicVolume) * musicVolumeScale;
+        EnsureInitialized();
+        StopMusicFade();
+        musicVolumeScale = Mathf.Max(0f, volumeScale);
+        float targetVolume = GetTargetMusicVolume();
+        float safeStartTime = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, clip.length - 0.01f));
 
         if (fadeDuration > 0f && musicSource.isPlaying && musicSource.clip != clip)
         {
-            musicFadeTween = musicSource.DOFade(0f, fadeDuration)
-                .SetEase(Ease.InQuad)
-                .OnComplete(() =>
-                {
-                    musicSource.clip = clip;
-                    musicSource.loop = loop;
-                    musicSource.time = startTime;
-                    musicSource.Play();
-                    musicFadeTween = musicSource.DOFade(targetVolume, fadeDuration)
-                        .SetEase(Ease.OutQuad);
-                });
+            musicFadeRoutine = StartCoroutine(CrossFadeMusic(
+                clip,
+                loop,
+                safeStartTime,
+                targetVolume,
+                fadeDuration));
+            return;
         }
-        else
+
+        musicSource.clip = clip;
+        musicSource.loop = loop;
+        musicSource.time = safeStartTime;
+        musicSource.volume = targetVolume;
+        musicSource.Play();
+    }
+
+    public void PlayMusic(
+        string key,
+        bool loop = true,
+        float fadeDuration = 0.5f,
+        float volumeScale = 1f)
+    {
+        if (TryGetClip(key, out AudioClip clip))
         {
-            musicSource.clip = clip;
-            musicSource.loop = loop;
-            musicSource.time = startTime;
-            musicSource.volume = targetVolume;
-            if (!musicSource.isPlaying)
-            {
-                musicSource.Play();
-            }
+            PlayMusic(clip, loop, fadeDuration, volumeScale);
         }
     }
 
-    public void OverrideMusic(AudioClip clip, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f)
+    public void OverrideMusic(
+        AudioClip clip,
+        bool loop = true,
+        float fadeDuration = 0.5f,
+        float volumeScale = 1f)
     {
+        EnsureInitialized();
         if (musicSource.isPlaying && musicSource.clip != null)
         {
             pausedMusicClip = musicSource.clip;
@@ -195,42 +165,28 @@ public class AudioManager : MonoBehaviour, IAudioService
     {
         if (hasPausedMusic && pausedMusicClip != null)
         {
-            PlayMusic(pausedMusicClip, true, fadeDuration, pausedMusicVolumeScale, pausedMusicTime);
+            AudioClip restoreClip = pausedMusicClip;
+            float restoreTime = pausedMusicTime;
+            float restoreScale = pausedMusicVolumeScale;
+            ClearPausedMusic();
+            PlayMusic(restoreClip, true, fadeDuration, restoreScale, restoreTime);
+            return;
         }
-        else
-        {
-            if (fadeDuration > 0f)
-            {
-                KillMusicFadeTween();
-                musicFadeTween = musicSource.DOFade(0f, fadeDuration).OnComplete(StopMusic);
-            }
-            else
-            {
-                StopMusic();
-            }
-        }
-        hasPausedMusic = false;
-        pausedMusicClip = null;
-    }
 
-    public void PlayMusic(string key, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f)
-    {
-        if (audioLibrary != null && audioLibrary.TryGetClip(key, out AudioClip clip))
+        ClearPausedMusic();
+        if (fadeDuration <= 0f || musicSource == null || !musicSource.isPlaying)
         {
-            PlayMusic(clip, loop, fadeDuration, volumeScale);
+            StopMusic();
+            return;
         }
-        else
-        {
-            BaseLog.LogWarning($"Music key '{key}' not found in AudioLibrary.");
-        }
+
+        StopMusicFade();
+        musicFadeRoutine = StartCoroutine(FadeOutAndStop(fadeDuration));
     }
 
     public void PauseMusic()
     {
-        if (musicSource != null && musicSource.isPlaying)
-        {
-            musicSource.Pause();
-        }
+        musicSource?.Pause();
     }
 
     public void ResumeMusic()
@@ -243,6 +199,7 @@ public class AudioManager : MonoBehaviour, IAudioService
 
     public void StopMusic()
     {
+        StopMusicFade();
         if (musicSource != null)
         {
             musicSource.Stop();
@@ -251,40 +208,14 @@ public class AudioManager : MonoBehaviour, IAudioService
 
     public void PlaySfx(AudioClip clip, float volumeScale = 1f)
     {
-        if (clip == null || sfxMuted)
-        {
-            return;
-        }
-
-        EnsureAudioSources();
-
-        AudioSource freeChannel = GetFreeChannel(out int channelIndex);
-        if (freeChannel != null)
-        {
-            freeChannel.spatialBlend = 0f;
-            freeChannel.clip = clip;
-            if (channelIndex < sfxChannelVolumeScales.Count)
-            {
-                sfxChannelVolumeScales[channelIndex] = volumeScale;
-            }
-            freeChannel.volume = sfxVolume * volumeScale;
-            freeChannel.Play();
-        }
-        else
-        {
-            sfxSource.PlayOneShot(clip, Mathf.Clamp01(sfxVolume * volumeScale));
-        }
+        PlaySfxInternal(clip, null, volumeScale);
     }
 
     public void PlaySfx(string key, float volumeScale = 1f)
     {
-        if (audioLibrary != null && audioLibrary.TryGetClip(key, out AudioClip clip))
+        if (TryGetClip(key, out AudioClip clip))
         {
             PlaySfx(clip, volumeScale);
-        }
-        else
-        {
-            BaseLog.LogWarning($"SFX key '{key}' not found in AudioLibrary.");
         }
     }
 
@@ -293,166 +224,84 @@ public class AudioManager : MonoBehaviour, IAudioService
         PlaySfx(clusterId, volumeScale);
     }
 
-    public void PlaySfxAtPosition(AudioClip clip, Vector3 position, float volumeScale = 1f)
+    public void PlaySequentialSfxInCluster(string clusterId, float volumeScale = 1f)
     {
-        if (clip == null || sfxMuted)
+        if (TryGetSequentialClip(clusterId, out AudioClip clip))
         {
-            return;
-        }
-
-        EnsureAudioSources();
-
-        AudioSource freeChannel = GetFreeChannel(out int channelIndex);
-        if (freeChannel != null)
-        {
-            freeChannel.transform.position = position;
-            freeChannel.spatialBlend = 1f;
-            freeChannel.clip = clip;
-            if (channelIndex < sfxChannelVolumeScales.Count)
-            {
-                sfxChannelVolumeScales[channelIndex] = volumeScale;
-            }
-            freeChannel.volume = sfxVolume * volumeScale;
-            freeChannel.Play();
-        }
-        else
-        {
-            sfxSource.PlayOneShot(clip, Mathf.Clamp01(sfxVolume * volumeScale));
+            PlaySfx(clip, volumeScale);
         }
     }
 
-    public void PlaySfxAtPosition(string key, Vector3 position, float volumeScale = 1f)
+    public void PlaySfxAtPosition(
+        AudioClip clip,
+        Vector3 position,
+        float volumeScale = 1f)
     {
-        if (audioLibrary != null && audioLibrary.TryGetClip(key, out AudioClip clip))
+        PlaySfxInternal(clip, position, volumeScale);
+    }
+
+    public void PlaySfxAtPosition(
+        string key,
+        Vector3 position,
+        float volumeScale = 1f)
+    {
+        if (TryGetClip(key, out AudioClip clip))
         {
             PlaySfxAtPosition(clip, position, volumeScale);
         }
-        else
-        {
-            BaseLog.LogWarning($"SFX key '{key}' not found in AudioLibrary.");
-        }
     }
 
-    public void PlayRandomSfxInClusterAtPosition(string clusterId, Vector3 position, float volumeScale = 1f)
+    public void PlayRandomSfxInClusterAtPosition(
+        string clusterId,
+        Vector3 position,
+        float volumeScale = 1f)
     {
         PlaySfxAtPosition(clusterId, position, volumeScale);
     }
 
-    public void PlaySequentialSfxInClusterAtPosition(string clusterId, Vector3 position, float volumeScale = 1f)
+    public void PlaySequentialSfxInClusterAtPosition(
+        string clusterId,
+        Vector3 position,
+        float volumeScale = 1f)
     {
-        if (audioLibrary != null)
+        if (TryGetSequentialClip(clusterId, out AudioClip clip))
         {
-            if (!clusterSequentialIndices.TryGetValue(clusterId, out int currentIndex))
-            {
-                currentIndex = -1;
-            }
-            if (audioLibrary.TryGetSequentialClip(clusterId, ref currentIndex, out AudioClip clip))
-            {
-                clusterSequentialIndices[clusterId] = currentIndex;
-                PlaySfxAtPosition(clip, position, volumeScale);
-            }
-            else
-            {
-                BaseLog.LogWarning($"SFX key '{clusterId}' not found in AudioLibrary for sequential play.");
-            }
+            PlaySfxAtPosition(clip, position, volumeScale);
         }
-    }
-
-    public void PlaySequentialSfxInCluster(string clusterId, float volumeScale = 1f)
-    {
-        if (audioLibrary != null)
-        {
-            if (!clusterSequentialIndices.TryGetValue(clusterId, out int currentIndex))
-            {
-                currentIndex = -1;
-            }
-            if (audioLibrary.TryGetSequentialClip(clusterId, ref currentIndex, out AudioClip clip))
-            {
-                clusterSequentialIndices[clusterId] = currentIndex;
-                PlaySfx(clip, volumeScale);
-            }
-            else
-            {
-                BaseLog.LogWarning($"SFX key '{clusterId}' not found in AudioLibrary for sequential play.");
-            }
-        }
-    }
-
-    private AudioSource GetFreeChannel(out int index)
-    {
-        for (int i = 0; i < sfxChannels.Count; i++)
-        {
-            if (sfxChannels[i] != null && !sfxChannels[i].isPlaying)
-            {
-                index = i;
-                return sfxChannels[i];
-            }
-        }
-
-        if (sfxChannels.Count < maxSfxChannelCount)
-        {
-            int newIndex = sfxChannels.Count;
-            var channelGo = new GameObject($"SfxChannel_Dynamic_{newIndex}");
-            channelGo.transform.SetParent(transform);
-            var source = channelGo.AddComponent<AudioSource>();
-            source.playOnAwake = false;
-            source.loop = false;
-            source.mute = sfxMuted;
-            sfxChannels.Add(source);
-            sfxChannelVolumeScales.Add(1f);
-            index = newIndex;
-            return source;
-        }
-
-        index = -1;
-        return null;
     }
 
     public void PauseSfx()
     {
-        if (sfxSource != null && sfxSource.isPlaying)
-        {
-            sfxSource.Pause();
-        }
-
+        sfxSource?.Pause();
         for (int i = 0; i < sfxChannels.Count; i++)
         {
-            if (sfxChannels[i] != null && sfxChannels[i].isPlaying)
-            {
-                sfxChannels[i].Pause();
-            }
+            sfxChannels[i]?.Pause();
         }
     }
 
     public void ResumeSfx()
     {
-        if (sfxSource != null && sfxSource.clip != null && !sfxSource.isPlaying)
+        if (sfxSource != null && sfxSource.clip != null)
         {
             sfxSource.UnPause();
         }
 
         for (int i = 0; i < sfxChannels.Count; i++)
         {
-            if (sfxChannels[i] != null && sfxChannels[i].clip != null && !sfxChannels[i].isPlaying)
+            AudioSource channel = sfxChannels[i];
+            if (channel != null && channel.clip != null)
             {
-                sfxChannels[i].UnPause();
+                channel.UnPause();
             }
         }
     }
 
     public void StopAllSfx()
     {
-        if (sfxSource != null)
-        {
-            sfxSource.Stop();
-        }
-
+        sfxSource?.Stop();
         for (int i = 0; i < sfxChannels.Count; i++)
         {
-            if (sfxChannels[i] != null)
-            {
-                sfxChannels[i].Stop();
-            }
+            sfxChannels[i]?.Stop();
         }
     }
 
@@ -464,26 +313,56 @@ public class AudioManager : MonoBehaviour, IAudioService
 
     public void SetMusicMuted(bool muted)
     {
-        musicMuted = muted;
-        ApplySettings();
+        if (settingsService != null)
+        {
+            settingsService.MusicEnabled = !muted;
+        }
+        else
+        {
+            musicMuted = muted;
+            ApplySettings();
+        }
     }
 
     public void SetSfxMuted(bool muted)
     {
-        sfxMuted = muted;
-        ApplySettings();
+        if (settingsService != null)
+        {
+            settingsService.SoundEnabled = !muted;
+        }
+        else
+        {
+            sfxMuted = muted;
+            ApplySettings();
+        }
     }
 
     public void SetMusicVolume(float volume)
     {
-        musicVolume = Mathf.Clamp01(volume);
-        ApplySettings();
+        float clamped = Mathf.Clamp01(volume);
+        if (settingsService != null)
+        {
+            settingsService.MusicVolume = clamped;
+        }
+        else
+        {
+            musicVolume = clamped;
+            ApplySettings();
+        }
     }
 
     public void SetSfxVolume(float volume)
     {
-        sfxVolume = Mathf.Clamp01(volume);
-        ApplySettings();
+        float clamped = Mathf.Clamp01(volume);
+        if (settingsService != null)
+        {
+            settingsService.SoundVolume = clamped;
+        }
+        else
+        {
+            sfxVolume = clamped;
+            ApplySettings();
+        }
     }
 
     public float GetMusicVolume() => musicVolume;
@@ -502,35 +381,47 @@ public class AudioManager : MonoBehaviour, IAudioService
 
     public void ApplySavedSettings(AudioSettingsData settings)
     {
-        musicMuted = settings.MusicMuted;
-        musicVolume = Mathf.Clamp01(settings.MusicVolume);
-        sfxMuted = settings.SfxMuted;
-        sfxVolume = Mathf.Clamp01(settings.SfxVolume);
-        ApplySettings();
+        SetMusicMuted(settings.MusicMuted);
+        SetMusicVolume(settings.MusicVolume);
+        SetSfxMuted(settings.SfxMuted);
+        SetSfxVolume(settings.SfxVolume);
+    }
+
+    public void Dispose()
+    {
+        if (settingsService != null)
+        {
+            settingsService.SettingChanged -= OnSettingChanged;
+        }
+
+        StopMusicFade();
+        StopAllSfx();
+    }
+
+    private void EnsureInitialized()
+    {
+        if (!initialized)
+        {
+            Initialize();
+        }
     }
 
     private void EnsureAudioSources()
     {
+        AudioSource[] existingSources = GetComponents<AudioSource>();
         if (musicSource == null)
         {
-            musicSource = GetComponent<AudioSource>();
-            if (musicSource == null)
-            {
-                musicSource = gameObject.AddComponent<AudioSource>();
-            }
+            musicSource = existingSources.Length > 0
+                ? existingSources[0]
+                : gameObject.AddComponent<AudioSource>();
         }
 
         if (sfxSource == null)
         {
-            var sources = GetComponents<AudioSource>();
-            if (sources.Length > 1)
-            {
-                sfxSource = sources[1];
-            }
-            else
-            {
-                sfxSource = gameObject.AddComponent<AudioSource>();
-            }
+            existingSources = GetComponents<AudioSource>();
+            sfxSource = existingSources.Length > 1
+                ? existingSources[1]
+                : gameObject.AddComponent<AudioSource>();
         }
 
         musicSource.playOnAwake = false;
@@ -539,29 +430,244 @@ public class AudioManager : MonoBehaviour, IAudioService
         sfxSource.loop = false;
     }
 
-    private void ApplySettings()
+    private void InitializeSfxPool()
     {
-        EnsureAudioSources();
-        musicSource.volume = (musicMuted ? 0f : musicVolume) * musicVolumeScale;
-        sfxSource.volume = sfxMuted ? 0f : sfxVolume;
-        musicSource.mute = musicMuted;
-        sfxSource.mute = sfxMuted;
-
-        for (int i = 0; i < sfxChannels.Count; i++)
+        if (sfxChannels.Count > 0)
         {
-            if (sfxChannels[i] != null)
-            {
-                sfxChannels[i].mute = sfxMuted;
-                if (i < sfxChannelVolumeScales.Count)
-                {
-                    sfxChannels[i].volume = sfxVolume * sfxChannelVolumeScales[i];
-                }
-            }
+            return;
+        }
+
+        for (int i = 0; i < sfxChannelCount; i++)
+        {
+            CreateSfxChannel($"SfxChannel_{i}");
         }
     }
 
-    private void OnDestroy()
+    private AudioSource CreateSfxChannel(string channelName)
     {
-        KillMusicFadeTween();
+        GameObject channelObject = new GameObject(channelName);
+        channelObject.transform.SetParent(transform, false);
+        AudioSource source = channelObject.AddComponent<AudioSource>();
+        source.playOnAwake = false;
+        source.loop = false;
+        source.mute = sfxMuted;
+        sfxChannels.Add(source);
+        sfxChannelVolumeScales.Add(1f);
+        return source;
+    }
+
+    private void PlaySfxInternal(
+        AudioClip clip,
+        Vector3? worldPosition,
+        float volumeScale)
+    {
+        if (clip == null || sfxMuted)
+        {
+            return;
+        }
+
+        EnsureInitialized();
+        AudioSource channel = GetFreeChannel(out int channelIndex);
+        if (channel == null)
+        {
+            sfxSource.PlayOneShot(clip, Mathf.Clamp01(sfxVolume * volumeScale));
+            return;
+        }
+
+        float safeScale = Mathf.Max(0f, volumeScale);
+        sfxChannelVolumeScales[channelIndex] = safeScale;
+        channel.transform.localPosition = Vector3.zero;
+        channel.spatialBlend = worldPosition.HasValue ? 1f : 0f;
+        if (worldPosition.HasValue)
+        {
+            channel.transform.position = worldPosition.Value;
+        }
+
+        channel.clip = clip;
+        channel.volume = Mathf.Clamp01(sfxVolume * safeScale);
+        channel.Play();
+    }
+
+    private AudioSource GetFreeChannel(out int index)
+    {
+        for (int i = 0; i < sfxChannels.Count; i++)
+        {
+            AudioSource channel = sfxChannels[i];
+            if (channel != null && !channel.isPlaying)
+            {
+                index = i;
+                return channel;
+            }
+        }
+
+        if (sfxChannels.Count < maxSfxChannelCount)
+        {
+            index = sfxChannels.Count;
+            return CreateSfxChannel($"SfxChannel_Dynamic_{index}");
+        }
+
+        index = -1;
+        return null;
+    }
+
+    private bool TryGetClip(string key, out AudioClip clip)
+    {
+        clip = null;
+        if (audioLibrary != null && audioLibrary.TryGetClip(key, out clip))
+        {
+            return true;
+        }
+
+        BaseLog.LogWarning($"Audio key '{key}' was not found in AudioLibrary.");
+        return false;
+    }
+
+    private bool TryGetSequentialClip(string key, out AudioClip clip)
+    {
+        clip = null;
+        if (audioLibrary == null)
+        {
+            BaseLog.LogWarning("AudioLibrary is not configured.");
+            return false;
+        }
+
+        clusterSequentialIndices.TryGetValue(key, out int index);
+        index = clusterSequentialIndices.ContainsKey(key) ? index : -1;
+        if (!audioLibrary.TryGetSequentialClip(key, ref index, out clip))
+        {
+            BaseLog.LogWarning($"Audio cluster '{key}' was not found in AudioLibrary.");
+            return false;
+        }
+
+        clusterSequentialIndices[key] = index;
+        return true;
+    }
+
+    private void SyncWithSettings()
+    {
+        if (settingsService == null)
+        {
+            return;
+        }
+
+        musicMuted = !settingsService.MusicEnabled;
+        musicVolume = settingsService.MusicVolume;
+        sfxMuted = !settingsService.SoundEnabled;
+        sfxVolume = settingsService.SoundVolume;
+    }
+
+    private void OnSettingChanged(string settingName)
+    {
+        if (settingName == nameof(ISettingsProvider.MusicEnabled)
+            || settingName == nameof(ISettingsProvider.MusicVolume)
+            || settingName == nameof(ISettingsProvider.SoundEnabled)
+            || settingName == nameof(ISettingsProvider.SoundVolume))
+        {
+            SyncWithSettings();
+            ApplySettings();
+        }
+    }
+
+    private void ApplySettings()
+    {
+        EnsureAudioSources();
+        musicSource.mute = musicMuted;
+        musicSource.volume = GetTargetMusicVolume();
+        sfxSource.mute = sfxMuted;
+        sfxSource.volume = sfxMuted ? 0f : sfxVolume;
+
+        for (int i = 0; i < sfxChannels.Count; i++)
+        {
+            AudioSource channel = sfxChannels[i];
+            if (channel == null)
+            {
+                continue;
+            }
+
+            channel.mute = sfxMuted;
+            channel.volume = sfxMuted
+                ? 0f
+                : Mathf.Clamp01(sfxVolume * sfxChannelVolumeScales[i]);
+        }
+    }
+
+    private float GetTargetMusicVolume()
+    {
+        return musicMuted ? 0f : Mathf.Clamp01(musicVolume * musicVolumeScale);
+    }
+
+    private IEnumerator CrossFadeMusic(
+        AudioClip nextClip,
+        bool loop,
+        float startTime,
+        float targetVolume,
+        float duration)
+    {
+        float halfDuration = Mathf.Max(0.01f, duration * 0.5f);
+        yield return FadeVolume(musicSource, musicSource.volume, 0f, halfDuration);
+
+        musicSource.Stop();
+        musicSource.clip = nextClip;
+        musicSource.loop = loop;
+        musicSource.time = startTime;
+        musicSource.volume = 0f;
+        musicSource.Play();
+
+        yield return FadeVolume(musicSource, 0f, targetVolume, halfDuration);
+        musicFadeRoutine = null;
+    }
+
+    private IEnumerator FadeOutAndStop(float duration)
+    {
+        yield return FadeVolume(musicSource, musicSource.volume, 0f, duration);
+        musicSource.Stop();
+        musicFadeRoutine = null;
+    }
+
+    private static IEnumerator FadeVolume(
+        AudioSource source,
+        float from,
+        float to,
+        float duration)
+    {
+        if (source == null)
+        {
+            yield break;
+        }
+
+        if (duration <= 0f)
+        {
+            source.volume = to;
+            yield break;
+        }
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            source.volume = Mathf.Lerp(from, to, Mathf.Clamp01(elapsed / duration));
+            yield return null;
+        }
+
+        source.volume = to;
+    }
+
+    private void StopMusicFade()
+    {
+        if (musicFadeRoutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(musicFadeRoutine);
+        musicFadeRoutine = null;
+    }
+
+    private void ClearPausedMusic()
+    {
+        hasPausedMusic = false;
+        pausedMusicClip = null;
+        pausedMusicTime = 0f;
+        pausedMusicVolumeScale = 1f;
     }
 }

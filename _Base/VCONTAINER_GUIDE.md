@@ -1,165 +1,238 @@
-# 🚀 Hướng Dẫn & Tối Ưu Hóa Sử Dụng VContainer Trong Base Framework
+# VContainer Guide cho Base Framework
 
-Tài liệu này tổng hợp toàn bộ nguyên lý thiết kế, quy chuẩn và hướng dẫn tối ưu hóa **VContainer** trong **Base Framework**.
+Tài liệu này mô tả cách dùng VContainer trong `com.base.vcontainer` sau đợt ổn định kiến trúc `1.1.0`.
 
----
+## 1. Một composition root duy nhất
 
-## 📑 Mục Lục
-1. [Triết Lý Kiến Trúc & Composition Root](#1-triết-lý-kiến-trúc--composition-root)
-2. [Quản Lý Vòng Đời & Scoped Containers (Hierarchy Scopes)](#2-quản-lý-vòng-đời--scoped-containers-hierarchy-scopes)
-3. [VContainer EntryPoints (Thay Thế MonoBehaviour)](#3-vcontainer-entrypoints-thay-thế-monobehaviour)
-4. [Tối Ưu Procedure State Machine (Không Reflection)](#4-tối-ưu-procedure-state-machine-không-reflection)
-5. [Auto-Injection Cho Object Pooling & UI](#5-auto-injection-cho-object-pooling--ui)
-6. [Best Practices & Performance Tuning (IL2CPP)](#6-best-practices--performance-tuning-il2cpp)
+`RootLifetimeScope` là nơi đăng ký service global. Mọi dependency quan trọng phải nhìn thấy được tại đây hoặc trong child scope tương ứng.
 
----
-
-## 1. Triết Lý Kiến Trúc & Composition Root
-
-Base Framework áp dụng mô hình **Dependency Injection (DI)** chuẩn mực với VContainer:
-- **Loose Coupling**: Các component chỉ phụ thuộc vào `Interface` thay vì concrete class.
-- **Explicit Dependencies**: Ưu tiên **Constructor Injection** để minh bạch các dependency mà class cần.
-- **Single Composition Root**: `RootLifetimeScope` đóng vai trò là nơi duy nhất đăng ký các dependency toàn cục.
-
-```
-[ RootLifetimeScope (Global) ]
-       │
-       ├──► UIManager (IUIService)
-       ├──► AudioManager (IAudioService)
-       ├──► SettingsManager (ISettingsProvider)
-       ├──► PoolManager (IPoolService)
-       └──► ProcedureManager (IProcedureService)
+```text
+RootLifetimeScope
+├── ISettingsService
+├── IAssetProvider
+├── IAudioService
+├── IUIService
+├── IPoolService
+├── IHapticService
+├── IProcedureService
+├── IProcedureSceneLoader
+└── IIAPProvider
 ```
 
----
+Không tạo thêm static singleton để truy cập các service này.
 
-## 2. Quản Lý Vòng Đời & Scoped Containers (Hierarchy Scopes)
+## 2. Đăng ký service theo đúng lifetime
 
-Để tránh memory leak và giữ cho bộ nhớ sạch sẽ, dự án chia Scope theo phân cấp:
-
-### A. RootLifetimeScope (Global / DontDestroyOnLoad)
-Chứa các service sống suốt vòng đời ứng dụng (Audio, UI System, Save/Load, IAP).
-
-### B. Scene LifetimeScopes (Child Scope)
-Mỗi Scene (ví dụ: `MainMenuLifetimeScope`, `GamePlayLifetimeScope`) sẽ kế thừa từ `RootLifetimeScope`.
+- `Singleton`: sống cùng root scope, ví dụ settings, procedure manager, asset provider.
+- `Scoped`: sống cùng scene/feature scope.
+- `Transient`: object stateless, nhẹ và được tạo theo nhu cầu.
 
 ```csharp
-public class GamePlayLifetimeScope : LifetimeScope
+protected override void Configure(IContainerBuilder builder)
 {
-    protected override void Configure(IContainerBuilder builder)
-    {
-        // Đăng ký các service CHỈ dùng trong trận đấu
-        builder.Register<EnemySpawner>(Lifetime.Scoped);
-        builder.Register<ScoreSystem>(Lifetime.Scoped);
-        
-        // Đăng ký EntryPoint cho Gameplay
-        builder.RegisterEntryPoint<GameplayLoopSystem>();
-    }
+    builder.Register<ScoreService>(Lifetime.Scoped)
+        .As<IScoreService>();
+
+    builder.RegisterEntryPoint<GameplayLoop>();
 }
 ```
-> 💡 **Lợi ích**: Khi Scene bị unload, VContainer sẽ **tự động Dispose toàn bộ service trong Child Scope** và giải phóng bộ nhớ 100%.
 
----
+Đừng đăng ký một service stateful dạng transient nếu nhiều consumer cần dùng chung state.
 
-## 3. VContainer EntryPoints (Thay Thế MonoBehaviour)
+## 3. EntryPoints là lifecycle chính
 
-Hạn chế viết logic trong `MonoBehaviour.Update()`. Thay vào đó, hãy sử dụng **Pure C# Class** kết hợp VContainer EntryPoints:
+Framework dùng VContainer EntryPoints làm lifecycle cho service:
 
-| Interface | Tương đương trong Unity | Công dụng |
-| :--- | :--- | :--- |
-| `IInitializable` | `Awake()` / `Start()` | Khởi tạo đồng bộ khi Scope tạo ra |
-| `IAsyncStartable` | `async Task Start()` | Khởi tạo bất đồng bộ (Load Asset, Load Data) |
-| `IStartable` | `Start()` | Chạy ngay sau khi khởi tạo xong |
-| `ITickable` | `Update()` | Chạy mỗi frame (Cực nhẹ, ít CPU Overhead) |
-| `IFixedTickable` | `FixedUpdate()` | Chạy theo chu kỳ vật lý |
-| `IDisposable` | `OnDestroy()` | Tự động hủy event listener & giải phóng bộ nhớ |
+| Interface | Thời điểm |
+|---|---|
+| `IInitializable` | Sau khi container build |
+| `IStartable` | Bắt đầu scope |
+| `IAsyncStartable` | Khởi tạo async |
+| `ITickable` | Mỗi Update |
+| `IFixedTickable` | Mỗi FixedUpdate |
+| `ILateTickable` | Mỗi LateUpdate |
+| `IDisposable` | Scope bị dispose |
 
-### Ví dụ mẫu EntryPoint:
+Ví dụ:
+
 ```csharp
-public class GameLogicSystem : ITickable, IStartable, IDisposable
+public sealed class GameplayLoop :
+    IStartable,
+    ITickable,
+    IDisposable
 {
-    private readonly InputManager _inputManager;
-    private readonly IPoolService _poolService;
+    private readonly IInputReader input;
 
-    // Constructor Injection
-    public GameLogicSystem(InputManager inputManager, IPoolService poolService)
+    public GameplayLoop(IInputReader input)
     {
-        _inputManager = inputManager;
-        _poolService = poolService;
+        this.input = input;
     }
 
     public void Start()
     {
-        // Setup logic khi game bắt đầu
+        input.EnableGameplay();
     }
 
     public void Tick()
     {
-        // Logic chạy theo frame (thay thế MonoBehaviour Update)
+        // Gameplay update.
     }
 
     public void Dispose()
     {
-        // Unsubscribe events tự động khi Scope bị hủy
+        input.DisableGameplay();
     }
 }
 ```
 
-Đăng ký trong Scope:
+Đăng ký bằng:
+
 ```csharp
-builder.RegisterEntryPoint<GameLogicSystem>();
+builder.RegisterEntryPoint<GameplayLoop>();
 ```
 
----
+Không tạo một Update dispatcher thứ hai và không scan toàn bộ MonoBehaviour bằng reflection.
 
-## 4. Tối Ưu Procedure State Machine (Không Reflection)
+## 4. MonoBehaviour vẫn có vai trò rõ ràng
 
-Để tối ưu tốc độ khởi động game trên Mobile/WebGL, `ProcedureManager` không sử dụng Reflection để quét Assembly.
+Giữ MonoBehaviour khi object cần:
 
-### Đăng ký Procedure trong `RootLifetimeScope`:
-```csharp
-// Đăng ký các Procedure vào VContainer
-builder.Register<ProcedureLaunch>(Lifetime.Singleton).As<Procedure>();
-builder.Register<ProcedureMenu>(Lifetime.Singleton).As<Procedure>();
-builder.Register<ProcedureGameplay>(Lifetime.Singleton).As<Procedure>();
+- Transform/hierarchy.
+- Inspector serialization.
+- Unity callbacks đặc thù.
+- Renderer, AudioSource, Camera hoặc UI component.
 
-// Đăng ký ProcedureManager nhận tự động danh sách Procedure
-builder.Register<ProcedureManager>(Lifetime.Singleton)
-       .As<IProcedureService>();
-```
-
----
-
-## 5. Auto-Injection Cho Object Pooling & UI
-
-Khi sinh ra GameObject từ Prefab, dùng `IObjectResolver.Instantiate()` để VContainer **tự động Inject** dependency vào tất cả MonoBehaviour gắn trên Prefab đó:
+Inject qua method:
 
 ```csharp
-// Trong UIManager hoặc PoolManager
-public class PoolManager : MonoBehaviour, IPoolService
+public sealed class RewardPopup : MonoBehaviour
 {
-    private IObjectResolver _resolver;
+    private IAudioService audioService;
 
     [Inject]
-    public void Construct(IObjectResolver resolver)
+    public void Construct(IAudioService audioService)
     {
-        _resolver = resolver;
-    }
-
-    private GameObject CreateInstance(GameObject prefab, Transform parent)
-    {
-        // Sinh ra Object và tiêm phụ thuộc (Dependency Injection) trong 1 bước
-        return _resolver != null 
-            ? _resolver.Instantiate(prefab, parent) 
-            : Instantiate(prefab, parent);
+        this.audioService = audioService;
     }
 }
 ```
 
----
+Prefab phải được tạo qua `IObjectResolver.Instantiate` hoặc system đã dùng resolver như `PoolManager`/`UIManager` để injection chạy.
 
-## 6. Best Practices & Performance Tuning (IL2CPP)
+## 5. Procedure đăng ký explicit
 
-1. **Ưu tiên Constructor Injection**: Giúp VContainer hoạt động với hiệu năng cao nhất và dễ viết Unit Test.
-2. **Bật VContainer Source Generator**: Trong Unity `Project Settings -> VContainer`, bật Code Generation để tránh Reflection hoàn toàn trên iOS/Android (IL2CPP).
-3. **Tránh Service Locator (`objectResolver.Resolve<T>()`)**: ngoại trừ các Manager đặc thù như `ProcedureManager` hoặc `UIManager` khi cần Instantiate động. Còn lại luôn truyền Dependency qua Constructor.
+```csharp
+public sealed class GameLifetimeScope : RootLifetimeScope
+{
+    protected override void RegisterProcedures(IContainerBuilder builder)
+    {
+        builder.Register<LaunchProcedure>(Lifetime.Singleton)
+            .As<Procedure>()
+            .AsSelf();
+
+        builder.Register<GameplayProcedure>(Lifetime.Singleton)
+            .As<Procedure>()
+            .AsSelf();
+    }
+}
+```
+
+`ProcedureManager` không quét assembly và không tự instantiate type chưa đăng ký. Điều này giúp:
+
+- Startup deterministic.
+- IL2CPP stripping dễ kiểm soát.
+- Constructor injection hoạt động rõ ràng.
+- Test procedure không cần Unity scene.
+
+```csharp
+await procedureService.ChangeStateAsync<GameplayProcedure>(token);
+```
+
+Nếu `OnEnterAsync` thất bại, manager giữ lại procedure trước và đặt transition state thành `Failed`.
+
+## 6. Scene scope
+
+Service chỉ dùng trong một scene nên đặt trong child `LifetimeScope` của scene:
+
+```csharp
+public sealed class GameplayLifetimeScope : LifetimeScope
+{
+    protected override void Configure(IContainerBuilder builder)
+    {
+        builder.Register<EnemyRegistry>(Lifetime.Scoped);
+        builder.Register<CombatService>(Lifetime.Scoped);
+        builder.RegisterEntryPoint<GameplayPresenter>();
+    }
+}
+```
+
+Khi scene/scope bị hủy, VContainer dispose các service scoped. Mọi service subscribe event hoặc giữ native resource phải implement `IDisposable`.
+
+## 7. Không dùng Resolve như service locator
+
+Ưu tiên constructor/method injection. `Resolve<T>()` chỉ nên xuất hiện tại infrastructure boundary, test hoặc nơi thật sự cần dynamic lookup.
+
+Không làm:
+
+```csharp
+void Update()
+{
+    LifetimeScope.Find<RootLifetimeScope>()
+        .Container.Resolve<IPlayerService>()
+        .Tick();
+}
+```
+
+Nên làm:
+
+```csharp
+public PlayerPresenter(IPlayerService playerService)
+{
+    this.playerService = playerService;
+}
+```
+
+## 8. Pool và UI injection
+
+`PoolManager` dùng resolver khi tạo instance mới, sau đó gọi:
+
+- `IPoolable.OnSpawn()` khi lấy object.
+- `IPoolable.OnDespawn()` khi trả object.
+
+Không inject lại mỗi lần spawn. Injection là thiết lập dependency; `OnSpawn` là reset runtime state.
+
+UI catalog lazy-create screen/popup. View phải hủy coroutine, event và animation trong hide/despawn/destroy.
+
+## 9. Optional integrations
+
+Core không reference cứng:
+
+- DOTween.
+- Odin Inspector.
+- URP.
+- Addressables.
+
+Mỗi integration thật nên nằm trong asmdef riêng và implement interface core. Ví dụ Addressables:
+
+```csharp
+public sealed class GameLifetimeScope : RootLifetimeScope
+{
+    protected override void RegisterAssetProvider(IContainerBuilder builder)
+    {
+        builder.Register<AddressablesProvider>(Lifetime.Singleton)
+            .As<IAssetProvider>()
+            .As<IDisposable>();
+    }
+}
+```
+
+## 10. Checklist trước khi merge
+
+1. Package import vào host project sạch không có compiler error.
+2. `Tools/Validate-Package.ps1` pass.
+3. EditMode và PlayMode tests pass.
+4. Prefab không có Missing Script.
+5. Không thêm service locator/static singleton mới.
+6. Async API có cancellation và error path.
+7. Event subscription được tháo trong `Dispose`/`OnDestroy`.
+8. Integration tùy chọn không được thêm vào core asmdef.

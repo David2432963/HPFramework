@@ -2,255 +2,308 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Reflection;
+using Newtonsoft.Json;
 using UnityEngine;
-using Newtonsoft.Json; 
 
+/// <summary>
+/// Safe conversion helpers for loosely typed argument arrays.
+/// </summary>
 public static class ObjectArrayExtensions
 {
-    /// <summary>
-    /// Lấy giá trị từ object[] theo index, ép kiểu an toàn sang T.
-    /// Hỗ trợ kiểu cơ bản, class, struct, Unity types, List, Dictionary và JSON parse.
-    /// </summary>
     public static T Get<T>(this object[] data, int index, T defaultValue = default)
     {
-        // Nếu mảng null hoặc index sai → trả default
-        if (data == null || index < 0 || index >= data.Length)
-            return defaultValue;
-
-        object value = data[index];
-
-        // Nếu null → trả default
-        if (value == null)
-            return defaultValue;
-
-        try
-        {
-            // Nếu đã đúng kiểu → trả luôn
-            if (value is T tValue)
-                return tValue;
-
-            // Nếu là List<T>
-            if (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(List<>))
-            {
-                var elementType = typeof(T).GetGenericArguments()[0];
-
-                // Nếu value là IList → convert sang List<T>
-                if (value is IList list)
-                {
-                    var resultList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(elementType));
-                    foreach (var item in list)
-                        resultList.Add(ConvertElement(item, elementType));
-                    return (T)resultList;
-                }
-
-                // Nếu value là JSON string → parse thành List<T>
-                if (value is string jsonList)
-                    return JsonConvert.DeserializeObject<T>(jsonList);
-
-                return defaultValue;
-            }
-
-            // Nếu là Dictionary<TKey, TValue>
-            if (typeof(T).IsGenericType && typeof(T).GetGenericTypeDefinition() == typeof(Dictionary<,>))
-            {
-                var keyType = typeof(T).GetGenericArguments()[0];
-                var valueType = typeof(T).GetGenericArguments()[1];
-
-                // Nếu value là IDictionary → convert sang Dictionary<TKey, TValue>
-                if (value is IDictionary dict)
-                {
-                    var resultDict = (IDictionary)Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(keyType, valueType));
-                    foreach (var key in dict.Keys)
-                    {
-                        var convertedKey = ConvertElement(key, keyType);
-                        var convertedValue = ConvertElement(dict[key], valueType);
-                        resultDict.Add(convertedKey, convertedValue);
-                    }
-                    return (T)resultDict;
-                }
-
-                // Nếu value là JSON string → parse thành Dictionary<TKey, TValue>
-                if (value is string jsonDict)
-                    return JsonConvert.DeserializeObject<T>(jsonDict);
-
-                return defaultValue;
-            }
-
-            // Nếu có thể convert cơ bản (int, float, string, bool…)
-            if (IsSimpleType(typeof(T)))
-                return (T)Convert.ChangeType(value, typeof(T));
-
-            // Nếu là Unity struct → xử lý riêng
-            if (TryParseUnityType<T>(value, out T unityResult))
-                return unityResult;
-
-            // Nếu là string → thử parse thành class hoặc struct custom
-            if (value is string strValue)
-            {
-                // Nếu T có TryParse(string, out T)
-                var tryParse = typeof(T).GetMethod("TryParse",
-                    BindingFlags.Static | BindingFlags.Public,
-                    null,
-                    new[] { typeof(string), typeof(T).MakeByRefType() },
-                    null);
-
-                if (tryParse != null)
-                {
-                    object[] parameters = { strValue, default(T) };
-                    bool success = (bool)tryParse.Invoke(null, parameters);
-                    if (success)
-                        return (T)parameters[1];
-                }
-
-                // Nếu T có Parse(string)
-                var parse = typeof(T).GetMethod("Parse",
-                    BindingFlags.Static | BindingFlags.Public,
-                    null,
-                    new[] { typeof(string) },
-                    null);
-
-                if (parse != null)
-                    return (T)parse.Invoke(null, new object[] { strValue });
-
-                // Nếu T có constructor nhận string
-                var ctor = typeof(T).GetConstructor(new[] { typeof(string) });
-                if (ctor != null)
-                    return (T)ctor.Invoke(new object[] { strValue });
-
-                // Nếu T là class → thử parse JSON vào object T
-                try
-                {
-                    return JsonConvert.DeserializeObject<T>(strValue);
-                }
-                catch
-                {
-                    return defaultValue;
-                }
-            }
-
-            return defaultValue;
-        }
-        catch
-        {
-            return defaultValue;
-        }
+        return TryGet(data, index, out T value) ? value : defaultValue;
     }
 
-    /// <summary>
-    /// Thử lấy giá trị, trả về true nếu thành công.
-    /// </summary>
     public static bool TryGet<T>(this object[] data, int index, out T value)
     {
         value = default;
-        try
+        if (data == null || index < 0 || index >= data.Length)
         {
-            value = data.Get<T>(index);
+            return false;
+        }
+
+        return TryConvert(data[index], out value);
+    }
+
+    private static bool TryConvert<T>(object rawValue, out T result)
+    {
+        result = default;
+        if (rawValue == null)
+        {
+            return false;
+        }
+
+        if (rawValue is T typedValue)
+        {
+            result = typedValue;
             return true;
         }
-        catch
+
+        Type targetType = typeof(T);
+        Type nullableType = Nullable.GetUnderlyingType(targetType);
+        Type effectiveType = nullableType ?? targetType;
+
+        try
         {
+            if (effectiveType.IsEnum)
+            {
+                if (rawValue is string enumText
+                    && Enum.TryParse(effectiveType, enumText, true, out object enumValue))
+                {
+                    result = (T)enumValue;
+                    return true;
+                }
+
+                object underlying = Convert.ChangeType(
+                    rawValue,
+                    Enum.GetUnderlyingType(effectiveType),
+                    CultureInfo.InvariantCulture);
+                result = (T)Enum.ToObject(effectiveType, underlying);
+                return true;
+            }
+
+            if (TryConvertUnityValue(rawValue, effectiveType, out object unityValue))
+            {
+                result = (T)unityValue;
+                return true;
+            }
+
+            if (effectiveType.IsPrimitive
+                || effectiveType == typeof(string)
+                || effectiveType == typeof(decimal)
+                || effectiveType == typeof(DateTime)
+                || effectiveType == typeof(Guid))
+            {
+                object converted;
+                if (effectiveType == typeof(Guid))
+                {
+                    if (!(rawValue is string guidText)
+                        || !Guid.TryParse(guidText, out Guid guid))
+                    {
+                        return false;
+                    }
+                    converted = guid;
+                }
+                else if (effectiveType == typeof(DateTime))
+                {
+                    if (rawValue is DateTime dateTime)
+                    {
+                        converted = dateTime;
+                    }
+                    else if (rawValue is string dateText
+                             && DateTime.TryParse(
+                                 dateText,
+                                 CultureInfo.InvariantCulture,
+                                 DateTimeStyles.RoundtripKind,
+                                 out DateTime parsedDate))
+                    {
+                        converted = parsedDate;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    converted = Convert.ChangeType(
+                        rawValue,
+                        effectiveType,
+                        CultureInfo.InvariantCulture);
+                }
+
+                result = (T)converted;
+                return true;
+            }
+
+            if (targetType.IsGenericType
+                && targetType.GetGenericTypeDefinition() == typeof(List<>)
+                && rawValue is IList sourceList)
+            {
+                Type elementType = targetType.GetGenericArguments()[0];
+                IList targetList = (IList)Activator.CreateInstance(targetType);
+                foreach (object item in sourceList)
+                {
+                    if (!TryConvertToType(item, elementType, out object convertedItem))
+                    {
+                        return false;
+                    }
+                    targetList.Add(convertedItem);
+                }
+
+                result = (T)targetList;
+                return true;
+            }
+
+            if (targetType.IsGenericType
+                && targetType.GetGenericTypeDefinition() == typeof(Dictionary<,>)
+                && rawValue is IDictionary sourceDictionary)
+            {
+                Type keyType = targetType.GetGenericArguments()[0];
+                Type valueType = targetType.GetGenericArguments()[1];
+                IDictionary targetDictionary = (IDictionary)Activator.CreateInstance(targetType);
+
+                foreach (DictionaryEntry entry in sourceDictionary)
+                {
+                    if (!TryConvertToType(entry.Key, keyType, out object convertedKey)
+                        || !TryConvertToType(entry.Value, valueType, out object convertedValue))
+                    {
+                        return false;
+                    }
+                    targetDictionary.Add(convertedKey, convertedValue);
+                }
+
+                result = (T)targetDictionary;
+                return true;
+            }
+
+            if (rawValue is string json)
+            {
+                T deserialized = JsonConvert.DeserializeObject<T>(json);
+                if (deserialized == null && !targetType.IsValueType)
+                {
+                    return false;
+                }
+
+                result = deserialized;
+                return true;
+            }
+
+            string serialized = JsonConvert.SerializeObject(rawValue);
+            T convertedObject = JsonConvert.DeserializeObject<T>(serialized);
+            if (convertedObject == null && !targetType.IsValueType)
+            {
+                return false;
+            }
+
+            result = convertedObject;
+            return true;
+        }
+        catch (Exception)
+        {
+            result = default;
             return false;
         }
     }
 
-    // ===========================
-    // Helpers
-    // ===========================
-
-    private static bool IsSimpleType(Type type)
+    private static bool TryConvertToType(
+        object value,
+        Type targetType,
+        out object converted)
     {
-        return type.IsPrimitive
-               || type.IsEnum
-               || type.Equals(typeof(string))
-               || type.Equals(typeof(decimal))
-               || type.Equals(typeof(DateTime));
-    }
+        converted = null;
+        if (value == null)
+        {
+            return !targetType.IsValueType || Nullable.GetUnderlyingType(targetType) != null;
+        }
 
-    private static object ConvertElement(object value, Type targetType)
-    {
-        if (value == null) return null;
+        if (targetType.IsInstanceOfType(value))
+        {
+            converted = value;
+            return true;
+        }
 
         try
         {
-            if (value.GetType() == targetType)
-                return value;
+            if (targetType.IsEnum)
+            {
+                if (value is string enumText)
+                {
+                    converted = Enum.Parse(targetType, enumText, true);
+                }
+                else
+                {
+                    object underlying = Convert.ChangeType(
+                        value,
+                        Enum.GetUnderlyingType(targetType),
+                        CultureInfo.InvariantCulture);
+                    converted = Enum.ToObject(targetType, underlying);
+                }
+                return true;
+            }
 
-            if (IsSimpleType(targetType))
-                return Convert.ChangeType(value, targetType);
+            if (targetType.IsPrimitive
+                || targetType == typeof(string)
+                || targetType == typeof(decimal))
+            {
+                converted = Convert.ChangeType(
+                    value,
+                    targetType,
+                    CultureInfo.InvariantCulture);
+                return true;
+            }
 
-            return JsonConvert.DeserializeObject(JsonConvert.SerializeObject(value), targetType);
+            converted = JsonConvert.DeserializeObject(
+                JsonConvert.SerializeObject(value),
+                targetType);
+            return converted != null || targetType.IsValueType;
         }
-        catch
+        catch (Exception)
         {
-            return null;
+            converted = null;
+            return false;
         }
     }
 
-    private static bool TryParseUnityType<T>(object value, out T result)
+    private static bool TryConvertUnityValue(
+        object rawValue,
+        Type targetType,
+        out object result)
     {
-        result = default;
+        result = null;
+        if (!(rawValue is string text))
+        {
+            return false;
+        }
 
-        if (typeof(T) == typeof(Vector2))
+        if (targetType == typeof(Color))
         {
-            if (value is Vector2 v2) { result = (T)(object)v2; return true; }
-            if (value is string s && TryParseVector2(s, out var vec2)) { result = (T)(object)vec2; return true; }
+            if (ColorUtility.TryParseHtmlString(text, out Color color))
+            {
+                result = color;
+                return true;
+            }
+            return false;
         }
-        else if (typeof(T) == typeof(Vector3))
+
+        string[] parts = text.Trim('(', ')').Split(',');
+        if (targetType == typeof(Vector2) && parts.Length == 2
+            && TryParseFloat(parts[0], out float x2)
+            && TryParseFloat(parts[1], out float y2))
         {
-            if (value is Vector3 v3) { result = (T)(object)v3; return true; }
-            if (value is string s && TryParseVector3(s, out var vec3)) { result = (T)(object)vec3; return true; }
+            result = new Vector2(x2, y2);
+            return true;
         }
-        else if (typeof(T) == typeof(Color))
+
+        if (targetType == typeof(Vector3) && parts.Length == 3
+            && TryParseFloat(parts[0], out float x3)
+            && TryParseFloat(parts[1], out float y3)
+            && TryParseFloat(parts[2], out float z3))
         {
-            if (value is Color c) { result = (T)(object)c; return true; }
-            if (value is string s && ColorUtility.TryParseHtmlString(s, out var color)) { result = (T)(object)color; return true; }
+            result = new Vector3(x3, y3, z3);
+            return true;
         }
-        else if (typeof(T) == typeof(Quaternion))
+
+        if (targetType == typeof(Quaternion) && parts.Length == 4
+            && TryParseFloat(parts[0], out float x4)
+            && TryParseFloat(parts[1], out float y4)
+            && TryParseFloat(parts[2], out float z4)
+            && TryParseFloat(parts[3], out float w4))
         {
-            if (value is Quaternion q) { result = (T)(object)q; return true; }
-            if (value is string s && TryParseQuaternion(s, out var quat)) { result = (T)(object)quat; return true; }
+            result = new Quaternion(x4, y4, z4, w4);
+            return true;
         }
 
         return false;
     }
 
-    private static bool TryParseVector2(string s, out Vector2 result)
+    private static bool TryParseFloat(string text, out float value)
     {
-        result = default;
-        try
-        {
-            s = s.Trim('(', ')');
-            var parts = s.Split(',');
-            result = new Vector2(float.Parse(parts[0]), float.Parse(parts[1]));
-            return true;
-        }
-        catch { return false; }
-    }
-
-    private static bool TryParseVector3(string s, out Vector3 result)
-    {
-        result = default;
-        try
-        {
-            s = s.Trim('(', ')');
-            var parts = s.Split(',');
-            result = new Vector3(float.Parse(parts[0]), float.Parse(parts[1]), float.Parse(parts[2]));
-            return true;
-        }
-        catch { return false; }
-    }
-
-    private static bool TryParseQuaternion(string s, out Quaternion result)
-    {
-        result = default;
-        try
-        {
-            s = s.Trim('(', ')');
-            var parts = s.Split(',');
-            result = new Quaternion(float.Parse(parts[0]), float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]));
-            return true;
-        }
-        catch { return false; }
+        return float.TryParse(
+            text.Trim(),
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out value);
     }
 }

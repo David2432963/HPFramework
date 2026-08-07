@@ -6,6 +6,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.UI;
 using Base.Bootstrap;
+using Base.UI;
 
 namespace Base.Editor
 {
@@ -24,25 +25,25 @@ namespace Base.Editor
                 alignment = TextAnchor.MiddleCenter,
                 normal = { textColor = new Color(0.2f, 0.8f, 0.4f) }
             };
-            EditorGUILayout.LabelField("⚡ Base Bootstrap Setup Utility", headerStyle);
-            EditorGUILayout.HelpBox("Kéo thả Prefab Bootstrap vào scene rồi bấm nút bên dưới để tự động tạo & kết nối Hierarchy, Canvases, Camera và ScriptableObjects trong 1-click.", MessageType.Info);
+            EditorGUILayout.LabelField("âš¡ Base Bootstrap Setup Utility", headerStyle);
+            EditorGUILayout.HelpBox("KÃ©o tháº£ Prefab Bootstrap vÃ o scene rá»“i báº¥m nÃºt bÃªn dÆ°á»›i Ä‘á»ƒ tá»± Ä‘á»™ng táº¡o & káº¿t ná»‘i Hierarchy, Canvases, Camera vÃ  ScriptableObjects trong 1-click.", MessageType.Info);
             EditorGUILayout.Space(5);
 
             // Action Buttons Section
             GUI.backgroundColor = new Color(0.3f, 0.7f, 1.0f);
-            if (GUILayout.Button("⚡ Auto Setup Hierarchy & References", GUILayout.Height(35)))
+            if (GUILayout.Button("âš¡ Auto Setup Hierarchy & References", GUILayout.Height(35)))
             {
                 AutoSetupHierarchy(scope);
             }
 
             GUI.backgroundColor = new Color(0.4f, 0.9f, 0.5f);
-            if (GUILayout.Button("📦 Auto Find / Create ScriptableObjects (Audio & UI)", GUILayout.Height(30)))
+            if (GUILayout.Button("ðŸ“¦ Auto Find / Create ScriptableObjects (Audio & UI)", GUILayout.Height(30)))
             {
                 AutoSetupScriptableObjects(scope);
             }
 
             GUI.backgroundColor = new Color(1.0f, 0.7f, 0.3f);
-            if (GUILayout.Button("🎬 Add Current & Loading Scene to Build Settings", GUILayout.Height(30)))
+            if (GUILayout.Button("ðŸŽ¬ Add Current & Loading Scene to Build Settings", GUILayout.Height(30)))
             {
                 AutoSetupBuildSettings();
             }
@@ -135,7 +136,7 @@ namespace Base.Editor
             poolSO.ApplyModifiedProperties();
 
             EditorSceneManager.MarkSceneDirty(rootGo.scene);
-            Debug.Log("⚡ [Bootstrap Setup] Successfully setup Bootstrap hierarchy, Managers, Camera & Canvases!");
+            Debug.Log("âš¡ [Bootstrap Setup] Successfully setup Bootstrap hierarchy, Managers, Camera & Canvases!");
         }
 
         public static void AutoSetupScriptableObjects(RootLifetimeScope scope)
@@ -164,7 +165,7 @@ namespace Base.Editor
                 uiSO.ApplyModifiedProperties();
             }
 
-            Debug.Log("📦 [Bootstrap Setup] Successfully linked AudioLibrarySO and UICatalogSO!");
+            Debug.Log("ðŸ“¦ [Bootstrap Setup] Successfully linked AudioLibrarySO and UICatalogSO!");
         }
 
         public static void AutoSetupBuildSettings()
@@ -192,11 +193,11 @@ namespace Base.Editor
             if (added)
             {
                 EditorBuildSettings.scenes = scenes.ToArray();
-                Debug.Log("🎬 [Bootstrap Setup] Successfully updated Build Settings with current scene & LoadingScene!");
+                Debug.Log("ðŸŽ¬ [Bootstrap Setup] Successfully updated Build Settings with current scene & LoadingScene!");
             }
             else
             {
-                Debug.Log("🎬 [Bootstrap Setup] All required scenes are already in Build Settings.");
+                Debug.Log("ðŸŽ¬ [Bootstrap Setup] All required scenes are already in Build Settings.");
             }
         }
 

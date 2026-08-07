@@ -1,105 +1,260 @@
-# _Base Package (Maximum VContainer Edition) - Tài Liệu Hướng Dẫn & Kiến Trúc
+# Base VContainer Framework
 
-`Assets/_Base` là một package nội bộ (internal package) chứa các mã nguồn, cấu trúc và tài nguyên có thể tái sử dụng độc lập giữa nhiều dự án game Unity khác nhau. Package này **đã bao gồm sẵn mã nguồn VContainer, UniTask và hỗ trợ Addressables**, sẵn sàng sử dụng ngay khi copy vào bất kỳ dự án Unity nào mà không cần cài đặt thêm UPM package nào khác.
+`com.base.vcontainer` là Unity package dùng làm nền tảng chung cho game: dependency injection, procedure state machine, scene flow, UI, audio, pooling, input, persistence, IAP abstraction và diagnostics.
 
-Package được đóng gói và giới hạn bởi Assembly Definition `_Base.asmdef`.
+Bản `1.1.0` tập trung vào ba yêu cầu:
 
----
+- Import package vào project sạch phải compile được.
+- Bootstrap phải build container theo thứ tự xác định và không có Missing Script.
+- Runtime core không phụ thuộc cứng vào DOTween, Odin, URP hoặc Addressables.
 
-## 1. Kiến Trúc VContainer & UniTask Cốt Lõi
+## Yêu cầu
 
-* **Đã nhúng sẵn VContainer Framework:** Plugin VContainer (`Assets/_Base/Plugins/VContainer`) nhúng trực tiếp trong `_Base`.
-* **Đã nhúng sẵn UniTask Framework:** Plugin UniTask (`Assets/_Base/Plugins/UniTask`) nhúng trực tiếp trong `_Base`.
-* **Tích hợp UniTask & Addressables Asset Provider:**
-  * Interface `IAssetProvider` bọc toàn bộ thao tác async load/instantiate asset:
-    ```csharp
-    UniTask<T> LoadAssetAsync<T>(string key, CancellationToken cancellationToken = default);
-    UniTask<GameObject> InstantiateAsync(string key, Transform parent = null, CancellationToken cancellationToken = default);
-    ```
-  * `AddressablesAssetProvider`: Tự động sử dụng Addressables API khi dự án có cài đặt package `com.unity.addressables`, và tự động fallback về `Resources` / `Direct Instantiate` khi chưa cài Addressables.
-* **Interface Abstractions (Phụ thuộc vào Interface):** Mọi service chính đều khai báo Interface và được đăng ký vào VContainer:
-  * `IAssetProvider` (UniTask & Addressables Asset Management)
-  * `ISettingsProvider` (Read-only cài đặt)
-  * `IAudioService` (Quản lý BGM & SFX)
-  * `IUIService` (Quản lý Screens, Popups, Toasts)
-  * `IPoolService` (GameObject & Component Pooling)
-  * `IHapticService` (Rung & Phản hồi lực)
-  * `IProcedureSceneLoader` (Tải cảnh bất đồng bộ)
-* **VContainer Native Atomic Instantiation:** `UIManager` và `PoolManager` sử dụng `objectResolver.Instantiate(prefab, parent)` native của VContainer — vừa Instantiate vừa Inject dependencies chỉ trong 1 bước duy nhất.
-* **Injectable Pure C# Procedures:** Các trạng thái game (`Procedure`) hỗ trợ **Constructor Injection**. `ProcedureManager` sử dụng `IObjectResolver.Resolve()` để khởi tạo các state Procedure với đầy đủ phụ thuộc.
-* **Scene Scoping cho Loading Scene:** Scene loading riêng (`LoadingScene`) có `LoadingLifetimeScope` kế thừa tự động từ `RootLifetimeScope`, inject `GameSceneManager` vào `LoadingScreen` mà không cần `FindObjectOfType` hay drag reference thủ công.
-* **Global EntryPoint Exception Handling:** Tự động bắt và ghi log các ngoại lệ không được xử lý xảy ra trong VContainer EntryPoints.
+- Unity `2021.3` trở lên.
+- Các dependency UPM được khai báo trong `package.json`:
+  - Input System
+  - Newtonsoft Json
+  - TextMeshPro
+  - UGUI
+- VContainer và UniTask đã được nhúng trong package.
 
----
+## Cài đặt
 
-## 2. Tổ Chức Thư Mục & Các Module Chính
+Thêm package từ Git URL hoặc local path trong Package Manager. Với local package:
 
-### 📁 Assets/_Base/
+```json
+{
+  "dependencies": {
+    "com.base.vcontainer": "file:../BaseVContainer/_Base"
+  }
+}
+```
 
-* **`BaseConstants.cs`**: Quản lý tập trung tất cả hằng số nội bộ của `_Base` (PlayerPrefs keys, Scene names, Audio keys...).
-* **`BaseLog.cs`**: Log wrapper với `[Conditional("ENABLE_BASE_LOG")]` giúp zero-allocation trên Production build.
+Không copy riêng file `.cs`. Phải giữ nguyên toàn bộ package và các file `.meta` để GUID prefab/script không bị thay đổi.
 
-* **`Plugins/`**: Mã nguồn các Framework được nhúng trực tiếp:
-  * `VContainer/`: VContainer DI Framework (Runtime & Editor Diagnostics Window).
-  * `UniTask/`: UniTask Async/Await Framework (Runtime & Editor Task Tracker).
-  * `Sirenix/`: Odin Inspector Framework (Rich Editor & Buttons).
+## Khởi tạo Bootstrap
 
-* **`Scripts/Assets/` (Quản lý Asset Async)**
-  * [IAssetProvider.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Assets/IAssetProvider.cs): Interface async asset loading bằng UniTask.
-  * [AddressablesAssetProvider.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Assets/AddressablesAssetProvider.cs): Provider hỗ trợ UniTask + Addressables với Resources fallback.
+Có hai cách:
 
-* **`Scripts/Bootstrap/` (Luồng khởi tạo & State Machine)**
-  * [RootLifetimeScope.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Bootstrap/RootLifetimeScope.cs): Composition Root chính của ứng dụng.
-  * [GameSceneManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Bootstrap/GameSceneManager.cs): Quản lý chuyển cảnh bất đồng bộ với LoadingScene Additive overlay.
-  * [Procedure.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Bootstrap/Procedure.cs): Base class cho các trạng thái vòng đời game.
-  * [ProcedureManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Bootstrap/ProcedureManager.cs): FSM điều phối các `Procedure` được resolve từ VContainer.
+1. Kéo `Prefabs/Bootstrap.prefab` vào scene đầu tiên.
+2. Dùng menu `Base > Create Bootstrap Prefab` để Unity tạo lại prefab hợp lệ trong `Assets/_Base/Prefabs`.
 
-* **`Scripts/Audio/` (Âm thanh)**
-  * [IAudioService.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Audio/IAudioService.cs): Interface cho hệ thống audio.
-  * [AudioManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Audio/AudioManager.cs): Service điều khiển BGM & SFX channels pool.
+Bootstrap mặc định chứa:
 
-* **`Scripts/UI/` (Giao diện)**
-  * [IUIService.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/UI/IUIService.cs): Interface cho hệ thống UI.
-  * [UIManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/UI/UIManager.cs): Quản lý nạp, hiển thị và đóng Screens/Popups.
-  * [LoadingLifetimeScope.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/UI/LoadingLifetimeScope.cs) & [LoadingScreen.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/UI/LoadingScreen.cs): Component hiển thị tiến trình nạp game trong `LoadingScene`.
+- `RootLifetimeScope`
+- `AudioManager`
+- `UIManager`
+- `InputManager`
+- `GameSceneManager`
+- `PoolManager`
+- `HapticManager`
+- UI camera/canvas roots
+- Pool root
 
-* **`Scripts/Persistence/` (Cài đặt & Lưu trữ)**
-  * [ISettingsProvider.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Persistence/ISettingsProvider.cs): Interface truy cập cài đặt read-only.
-  * [SettingsManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Persistence/SettingsManager.cs): Pure C# service lưu cache cài đặt trong RAM, tự động ghi PlayerPrefs khi dispose.
+Các catalog như `AudioLibrarySO`, `UICatalogSO`, input asset và toast prefab có thể được gán sau trong Inspector.
 
-* **`Scripts/Pooling/` (Tối ưu bộ nhớ)**
-  * [IPoolService.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Pooling/IPoolService.cs): Interface cho object pooling.
-  * [PoolManager.cs](file:///d:/Repo_Unity/Projects/BaseVContainer/Assets/_Base/Scripts/Pooling/PoolManager.cs): Bể chứa GameObject/Component với VContainer atomic instantiation.
+## Composition Root
 
----
+Tạo scope của game bằng cách kế thừa `RootLifetimeScope` và đăng ký procedure một cách explicit:
 
-## 3. Hướng Dẫn Tích Hợp Vào Dự Án Mới
+```csharp
+using VContainer;
+using Base.Bootstrap;
 
-1. Copy toàn bộ thư mục `Assets/_Base` vào dự án Unity của bạn.
-2. Tạo GameObject trong Scene đầu tiên, gắn script `RootLifetimeScope`. Bấm nút **`⚡ Auto Setup Hierarchy & References`** để tự động tạo và link Canvases/Camera trong 1 click.
-3. Khai báo Constructor Injection trong các class `Procedure` state:
-   ```csharp
-   public class GameplayProcedure : Procedure
-   {
-       private readonly IUIService uiService;
-       private readonly IAudioService audioService;
-       private readonly IAssetProvider assetProvider;
+public sealed class GameLifetimeScope : RootLifetimeScope
+{
+    protected override void RegisterProcedures(IContainerBuilder builder)
+    {
+        builder.Register<LaunchProcedure>(Lifetime.Singleton)
+            .As<Procedure>()
+            .AsSelf();
 
-       public GameplayProcedure(IUIService uiService, IAudioService audioService, IAssetProvider assetProvider)
-       {
-           this.uiService = uiService;
-           this.audioService = audioService;
-           this.assetProvider = assetProvider;
-       }
+        builder.Register<MenuProcedure>(Lifetime.Singleton)
+            .As<Procedure>()
+            .AsSelf();
+    }
+}
+```
 
-       public override void OnEnter()
-       {
-           uiService.ShowScreen<GameplayScreen>();
-           audioService.PlayMusic("gameplay_bgm");
-       }
-   }
-   ```
-4. Đăng ký các Procedure vào `RootLifetimeScope`:
-   ```csharp
-   builder.Register<GameplayProcedure>(Lifetime.Transient);
-   ```
+`ProcedureManager` nhận `IEnumerable<Procedure>` từ VContainer. Framework không quét assembly, không dùng `Activator.CreateInstance()` và không tự tạo procedure chưa đăng ký.
+
+## Procedure
+
+```csharp
+using System.Threading;
+using Cysharp.Threading.Tasks;
+using Base.UI;
+
+public sealed class MenuProcedure : Procedure
+{
+    private readonly IUIService uiService;
+
+    public MenuProcedure(IUIService uiService)
+    {
+        this.uiService = uiService;
+    }
+
+    public override UniTask OnEnterAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        uiService.ShowScreen<MenuScreen>();
+        return UniTask.CompletedTask;
+    }
+}
+```
+
+Chuyển state:
+
+```csharp
+await procedureService.ChangeStateAsync<MenuProcedure>(cancellationToken);
+```
+
+Mỗi transition có trạng thái `Idle`, `Exiting`, `Entering` hoặc `Failed`. Transition async được serialize để không có hai transition chạy đồng thời.
+
+## Scene Flow
+
+`GameSceneManager` sử dụng `UniTask` làm API chính:
+
+```csharp
+Scene scene = await sceneManager.LoadSceneAsync(
+    "Gameplay",
+    fakeLoadingDuration: 0.5f,
+    cancellationToken);
+```
+
+Contract của một request load:
+
+- Hoàn tất và trả về `Scene` hợp lệ.
+- Ném exception có nội dung rõ ràng.
+- Hoặc bị hủy bằng `OperationCanceledException`.
+
+Không còn callback completion source có thể treo vô hạn. Framework cũng không tự gọi `Resources.UnloadUnusedAssets()` sau mỗi lần chuyển scene.
+
+## Asset Provider
+
+Core đăng ký `ResourcesAssetProvider` mặc định:
+
+```csharp
+GameObject view = await assetProvider.InstantiateAsync(
+    "UI/MyView",
+    parent,
+    cancellationToken);
+
+assetProvider.ReleaseInstance(view);
+```
+
+`AddressablesAssetProvider` trong core chỉ là alias tương thích cũ và hiện delegate sang Resources. Dự án cần Addressables nên đặt implementation thật trong một integration assembly riêng rồi override:
+
+```csharp
+protected override void RegisterAssetProvider(IContainerBuilder builder)
+{
+    builder.Register<MyAddressablesAssetProvider>(Lifetime.Singleton)
+        .As<IAssetProvider>();
+}
+```
+
+## Settings
+
+`ISettingsService` là nguồn dữ liệu mutable duy nhất cho audio, haptic, quality và frame rate. Không nên để từng manager tự đọc/ghi PlayerPrefs riêng.
+
+```csharp
+settingsService.MusicEnabled = false;
+settingsService.MusicVolume = 0.6f;
+settingsService.Save();
+```
+
+## Pooling
+
+Prefab có thể implement `IPoolable`:
+
+```csharp
+public sealed class Projectile : MonoBehaviour, IPoolable
+{
+    public void OnSpawn()
+    {
+        // Reset state cho lượt sử dụng mới.
+    }
+
+    public void OnDespawn()
+    {
+        // Hủy timer, event và hiệu ứng đang chạy.
+    }
+}
+```
+
+Pool có duplicate-release protection và giới hạn số instance inactive cho mỗi prefab.
+
+## UI
+
+UI catalog được load lazy. Framework không preload toàn bộ prefab khi bootstrap. Các transition built-in dùng coroutine + unscaled time và `AnimationCurve`, không yêu cầu DOTween.
+
+URP camera stacking được phát hiện bằng reflection khi URP tồn tại; project không có URP vẫn compile.
+
+## IAP
+
+- Editor/Development Build: `SimulatedIAPProvider`.
+- Release Build: `UnavailableIAPProvider` cho tới khi game đăng ký provider production thật.
+
+Không phát hành game với simulated provider.
+
+## Kiểm tra package
+
+Static integrity check:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Validate-Package.ps1
+```
+
+Kiểm tra này phát hiện:
+
+- Asset/folder thiếu `.meta`.
+- GUID trùng hoặc sai format.
+- asmdef/package JSON lỗi.
+- asmdef reference không resolve.
+- prefab chứa script GUID hỏng.
+- lifecycle/service-locator cũ quay trở lại.
+- dependency cứng DOTween/Odin hoặc global unload.
+
+Test assemblies có trong package:
+
+- `Base.Tests.Editor`: procedure, utility và prefab integrity.
+- `Base.Tests.PlayMode`: dựng Bootstrap thật, build VContainer container và resolve service lõi.
+
+Kết quả validation hiện tại trên Unity `6000.0.77f1`:
+
+- Package import/compile: pass.
+- EditMode: `7/7` pass.
+- PlayMode: `1/1` pass.
+
+## Module chính
+
+```text
+_Base/
+├── Scripts/
+│   ├── Assets
+│   ├── Audio
+│   ├── Bootstrap
+│   ├── Common
+│   ├── IAP
+│   ├── Input
+│   ├── Persistence
+│   ├── Pooling
+│   └── UI
+├── Graphics
+├── Diagnostics
+├── Plugins
+│   ├── VContainer
+│   └── UniTask
+├── Prefabs
+└── Tests
+```
+
+## Nguyên tắc mở rộng
+
+- Dependency được đăng ký tại composition root.
+- Dùng VContainer EntryPoints cho lifecycle service.
+- Không thêm global singleton/service locator mới.
+- Integration tùy chọn phải có asmdef riêng.
+- Mọi async operation phải hoàn tất, throw hoặc cancel.
+- Mọi pooled object phải reset state khi spawn/despawn.

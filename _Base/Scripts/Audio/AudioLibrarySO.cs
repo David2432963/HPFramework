@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using Sirenix.OdinInspector;
 
 [CreateAssetMenu(fileName = "AudioLibrary", menuName = "Audio/Audio Library")]
 public class AudioLibrarySO : ScriptableObject
@@ -9,7 +8,6 @@ public class AudioLibrarySO : ScriptableObject
     [System.Serializable]
     public struct AudioEntry
     {
-        [TableColumnWidth(160, Resizable = false)]
         public string key;
         public AudioClip clip;
     }
@@ -17,19 +15,14 @@ public class AudioLibrarySO : ScriptableObject
     [System.Serializable]
     public struct AudioClusterEntry
     {
-        [TableColumnWidth(160, Resizable = false)]
         public string clusterId;
         public List<AudioClip> clips;
     }
 
-    [Title("🎵 Audio Library Database", "Manage single clips and randomized audio clusters", TitleAlignments.Centered)]
-
-    [BoxGroup("Single Audio Clips")]
-    [Searchable, TableList(AlwaysExpanded = true, DrawScrollView = true)]
+    [Header("Single Audio Clips")]
     [SerializeField] private List<AudioEntry> audioEntries = new List<AudioEntry>();
 
-    [BoxGroup("Audio Clusters (Randomized / Sequential Groups)")]
-    [Searchable, TableList(AlwaysExpanded = true)]
+    [Header("Audio Clusters")]
     [SerializeField] private List<AudioClusterEntry> audioClusters = new List<AudioClusterEntry>();
 
     private Dictionary<string, AudioClip> directClipLookup;

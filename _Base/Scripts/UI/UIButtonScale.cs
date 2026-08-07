@@ -1,30 +1,24 @@
-using DG.Tweening;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using VContainer;
 using Base.Audio;
-using Base;
 
 namespace Base.UI
 {
-    /// <summary>
-    /// Creates a visual "push down" scale effect when the UI element is interacted with.
-    /// Attach this to any Button or interactable UI graphic.
-    /// Supports VContainer dependency injection for IAudioService.
-    /// </summary>
     [RequireComponent(typeof(Button))]
     [DisallowMultipleComponent]
     public class UIButtonScale : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerExitHandler
     {
         [Header("Animation Settings")]
-        [SerializeField] private float pressedScaleMultiplier = 0.9f;
-        [SerializeField] private float duration = 0.1f;
-        [SerializeField] private Ease easeDown = Ease.OutQuad;
-        [SerializeField] private Ease easeUp = Ease.OutBack;
+        [SerializeField, Range(0.1f, 1f)] private float pressedScaleMultiplier = 0.9f;
+        [SerializeField, Min(0f)] private float duration = 0.1f;
+        [SerializeField] private AnimationCurve pressCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+        [SerializeField] private AnimationCurve releaseCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
         private Vector3 originalScale;
-        private Tween currentTween;
+        private Coroutine scaleRoutine;
         private bool isPressed;
         private bool isInitialized;
         private Button attachedButton;
@@ -43,10 +37,12 @@ namespace Base.UI
 
         private void Initialize()
         {
-            if (isInitialized) return;
+            if (isInitialized)
+            {
+                return;
+            }
 
             originalScale = transform.localScale;
-
             attachedButton = GetComponent<Button>();
             if (attachedButton != null)
             {
@@ -59,91 +55,114 @@ namespace Base.UI
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            if (transform is RectTransform rectTransform)
+            if (!(transform is RectTransform rectTransform))
             {
-                Vector2 targetPivot = new Vector2(0.5f, 0.5f);
-                if (rectTransform.pivot != targetPivot)
-                {
-                    Vector2 pivotDelta = targetPivot - rectTransform.pivot;
-                    Vector2 size = rectTransform.rect.size;
-                    Vector2 offset = new Vector2(pivotDelta.x * size.x, pivotDelta.y * size.y);
-
-                    UnityEditor.Undo.RecordObject(rectTransform, "Change Pivot Keep Position");
-                    rectTransform.pivot = targetPivot;
-                    rectTransform.anchoredPosition += offset;
-                }
+                return;
             }
+
+            Vector2 targetPivot = new Vector2(0.5f, 0.5f);
+            if (rectTransform.pivot == targetPivot)
+            {
+                return;
+            }
+
+            Vector2 pivotDelta = targetPivot - rectTransform.pivot;
+            Vector2 size = rectTransform.rect.size;
+            Vector2 offset = new Vector2(pivotDelta.x * size.x, pivotDelta.y * size.y);
+            UnityEditor.Undo.RecordObject(rectTransform, "Change Pivot Keep Position");
+            rectTransform.pivot = targetPivot;
+            rectTransform.anchoredPosition += offset;
         }
 #endif
 
         private void OnEnable()
         {
-            if (isInitialized)
-            {
-                transform.localScale = originalScale;
-            }
+            Initialize();
+            transform.localScale = originalScale;
         }
 
         private void OnDisable()
         {
             isPressed = false;
-            KillTween();
+            StopScaleRoutine();
             if (isInitialized)
             {
                 transform.localScale = originalScale;
             }
         }
 
-        private void OnDestroy()
-        {
-            KillTween();
-        }
-
         public void OnPointerDown(PointerEventData eventData)
         {
             Initialize();
-            if (attachedButton != null && (!attachedButton.interactable || !attachedButton.enabled)) return;
-            
-            isPressed = true;
-            if (audioService != null)
+            if (attachedButton != null && (!attachedButton.interactable || !attachedButton.enabled))
             {
-                audioService.PlaySfx(BaseConstants.ButtonClickAudioKey);
+                return;
             }
-            KillTween();
-            currentTween = transform.DOScale(originalScale * pressedScaleMultiplier, duration)
-                .SetUpdate(true)
-                .SetEase(easeDown);
+
+            isPressed = true;
+            audioService?.PlaySfx(BaseConstants.ButtonClickAudioKey);
+            AnimateTo(originalScale * pressedScaleMultiplier, pressCurve);
         }
 
         public void OnPointerUp(PointerEventData eventData)
         {
-            if (!isPressed) return;
-            isPressed = false;
-
-            KillTween();
-            currentTween = transform.DOScale(originalScale, duration)
-                .SetUpdate(true)
-                .SetEase(easeUp);
+            ReleasePress();
         }
 
         public void OnPointerExit(PointerEventData eventData)
         {
-            if (!isPressed) return;
-            isPressed = false;
-
-            KillTween();
-            currentTween = transform.DOScale(originalScale, duration)
-                .SetUpdate(true)
-                .SetEase(easeUp);
+            ReleasePress();
         }
 
-        private void KillTween()
+        private void ReleasePress()
         {
-            if (currentTween != null && currentTween.IsActive())
+            if (!isPressed)
             {
-                currentTween.Kill();
+                return;
             }
-            currentTween = null;
+
+            isPressed = false;
+            AnimateTo(originalScale, releaseCurve);
+        }
+
+        private void AnimateTo(Vector3 targetScale, AnimationCurve curve)
+        {
+            StopScaleRoutine();
+            if (duration <= 0f || !isActiveAndEnabled)
+            {
+                transform.localScale = targetScale;
+                return;
+            }
+
+            scaleRoutine = StartCoroutine(ScaleRoutine(targetScale, curve));
+        }
+
+        private IEnumerator ScaleRoutine(Vector3 targetScale, AnimationCurve curve)
+        {
+            Vector3 startScale = transform.localScale;
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                float normalized = Mathf.Clamp01(elapsed / duration);
+                float t = curve == null ? normalized : curve.Evaluate(normalized);
+                transform.localScale = Vector3.LerpUnclamped(startScale, targetScale, t);
+                yield return null;
+            }
+
+            transform.localScale = targetScale;
+            scaleRoutine = null;
+        }
+
+        private void StopScaleRoutine()
+        {
+            if (scaleRoutine == null)
+            {
+                return;
+            }
+
+            StopCoroutine(scaleRoutine);
+            scaleRoutine = null;
         }
     }
 }

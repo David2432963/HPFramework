@@ -1,9 +1,5 @@
 using System;
 using System.Collections.Generic;
-#if UNITY_2021_3_OR_NEWER
-using System.Runtime.InteropServices;
-using Unity.Collections.LowLevel.Unsafe;
-#endif
 
 namespace VContainer.Internal
 {
@@ -18,7 +14,7 @@ namespace VContainer.Internal
 
         public FreeList(int initialCapacity)
         {
-            values = new T[initialCapacity];
+            values = new T[Math.Max(1, initialCapacity)];
         }
 
 #if NETSTANDARD2_1
@@ -28,6 +24,7 @@ namespace VContainer.Internal
             {
                 return ReadOnlySpan<T>.Empty;
             }
+
             return values.AsSpan(0, lastIndex + 1);
         }
 #endif
@@ -36,20 +33,21 @@ namespace VContainer.Internal
 
         public void Add(T item)
         {
+            if (item == null) throw new ArgumentNullException(nameof(item));
+
             lock (gate)
             {
                 CheckDispose();
 
-                // try find blank
                 var index = FindNullIndex(values);
                 if (index == -1)
                 {
-                    // full, 1, 4, 6,...resize(x1.5)
-                    var len = values.Length;
-                    var newValues = new T[len + len / 2];
-                    Array.Copy(values, newValues, len);
+                    var length = values.Length;
+                    var newLength = Math.Max(length + 1, length + length / 2);
+                    var newValues = new T[newLength];
+                    Array.Copy(values, newValues, length);
                     values = newValues;
-                    index = len;
+                    index = length;
                 }
 
                 values[index] = item;
@@ -64,39 +62,44 @@ namespace VContainer.Internal
         {
             lock (gate)
             {
-                if (index < values.Length)
+                CheckDispose();
+                if (index < 0 || index >= values.Length)
                 {
-                    ref var v = ref values[index];
-                    if (v == null) throw new KeyNotFoundException($"key index {index} is not found.");
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
 
-                    v = null;
-                    if (index == lastIndex)
-                    {
-                        lastIndex = FindLastNonNullIndex(values, index);
-                    }
+                ref var value = ref values[index];
+                if (value == null)
+                {
+                    throw new KeyNotFoundException($"key index {index} is not found.");
+                }
+
+                value = null;
+                if (index == lastIndex)
+                {
+                    lastIndex = FindLastNonNullIndex(values, index - 1);
                 }
             }
         }
 
         public bool Remove(T value)
         {
+            if (value == null) return false;
+
             lock (gate)
             {
+                CheckDispose();
                 if (lastIndex < 0) return false;
 
-                var index = -1;
-                for (var i = 0; i < values.Length; i++)
+                for (var i = 0; i <= lastIndex; i++)
                 {
-                    if (values[i] == value)
-                    {
-                        index = i;
-                        break;
-                    }
-                }
+                    if (!ReferenceEquals(values[i], value)) continue;
 
-                if (index != -1)
-                {
-                    RemoveAt(index);
+                    values[i] = null;
+                    if (i == lastIndex)
+                    {
+                        lastIndex = FindLastNonNullIndex(values, i - 1);
+                    }
                     return true;
                 }
             }
@@ -108,7 +111,8 @@ namespace VContainer.Internal
         {
             lock (gate)
             {
-                if (lastIndex > 0)
+                CheckDispose();
+                if (lastIndex >= 0)
                 {
                     Array.Clear(values, 0, lastIndex + 1);
                     lastIndex = -1;
@@ -120,7 +124,9 @@ namespace VContainer.Internal
         {
             lock (gate)
             {
-                lastIndex = -2; // -2 is disposed.
+                if (IsDisposed) return;
+                Array.Clear(values, 0, values.Length);
+                lastIndex = -2;
             }
         }
 
@@ -132,59 +138,24 @@ namespace VContainer.Internal
             }
         }
 
-#if UNITY_2021_3_OR_NEWER
-        static unsafe int FindNullIndex(T[] target)
-        {
-            ref var head = ref UnsafeUtility.As<T, IntPtr>(ref MemoryMarshal.GetReference(target.AsSpan()));
-            fixed (void* p = &head)
-            {
-                var span = new ReadOnlySpan<IntPtr>(p, target.Length);
-
-#if NETSTANDARD2_1
-                return span.IndexOf(IntPtr.Zero);
-#else
-                for (int i = 0; i < span.Length; i++)
-                {
-                    if (span[i] == IntPtr.Zero) return i;
-                }
-                return -1;
-#endif
-            }
-        }
-
-        static unsafe int FindLastNonNullIndex(T[] target, int lastIndex)
-        {
-            ref var head = ref UnsafeUtility.As<T, IntPtr>(ref MemoryMarshal.GetReference(target.AsSpan()));
-            fixed (void* p = &head)
-            {
-                var span = new ReadOnlySpan<IntPtr>(p, lastIndex); // without lastIndexed value.
-
-                for (var i = span.Length - 1; i >= 0; i--)
-                {
-                    if (span[i] != IntPtr.Zero) return i;
-                }
-
-                return -1;
-            }
-        }
-#else
         static int FindNullIndex(T[] target)
         {
             for (var i = 0; i < target.Length; i++)
             {
                 if (target[i] == null) return i;
             }
+
             return -1;
         }
 
         static int FindLastNonNullIndex(T[] target, int lastIndex)
         {
-            for (var i = lastIndex; i >= 0; i--)
+            for (var i = Math.Min(lastIndex, target.Length - 1); i >= 0; i--)
             {
                 if (target[i] != null) return i;
             }
+
             return -1;
         }
-#endif
     }
 }

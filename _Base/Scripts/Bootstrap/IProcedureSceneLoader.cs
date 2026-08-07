@@ -1,8 +1,11 @@
-using System;
-using UnityEngine;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using UnityEngine.SceneManagement;
 
 public interface IProcedureSceneLoader
 {
-    Coroutine LoadSceneAsync(string sceneName, float fakeLoadingDuration = 0f, Action<Scene> onLoaded = null);
+    UniTask<Scene> LoadSceneAsync(
+        string sceneName,
+        float fakeLoadingDuration = 0f,
+        CancellationToken cancellationToken = default);
 }

@@ -10,7 +10,7 @@ public enum AdResult
 }
 
 [DisallowMultipleComponent]
-public sealed class SimulatedAds : MonoBehaviour, ITickHandler
+public sealed class SimulatedAds : MonoBehaviour
 {
     public static SimulatedAds Instance { get; private set; }
 
@@ -64,15 +64,10 @@ public sealed class SimulatedAds : MonoBehaviour, ITickHandler
             skipNormalBtn.onClick.AddListener(OnSkipNormal);
         }
 
-        {
-            Main.Instance.Register(this);
-        }
     }
 
     private void OnDestroy()
     {
-        Main.Instance?.Unregister(this);
-
         if (Instance == this)
         {
             Instance = null;
@@ -89,7 +84,7 @@ public sealed class SimulatedAds : MonoBehaviour, ITickHandler
         }
     }
 
-    public void Tick(float deltaTime)
+    private void Update()
     {
         if (!showingAd)
         {

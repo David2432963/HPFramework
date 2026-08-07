@@ -1,130 +1,66 @@
-using System.Collections.Generic;
+using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
 using VContainer;
-#if ADDRESSABLES_PRESENT
-using UnityEngine.AddressableAssets;
-using UnityEngine.ResourceManagement.AsyncOperations;
-#endif
 
 namespace Base.Assets
 {
     /// <summary>
-    /// Asset provider implementation powered by Addressables and UniTask.
-    /// Supports conditional compilation if Addressables package is installed, with Resources fallback.
+    /// Backward-compatible alias for projects that previously referenced this type.
+    /// The core package no longer hard-depends on Addressables; use ResourcesAssetProvider by
+    /// default or provide an Addressables implementation from a separate integration assembly.
     /// </summary>
-    public sealed class AddressablesAssetProvider : IAssetProvider
+    [Obsolete(
+        "AddressablesAssetProvider in the core package now delegates to Resources. " +
+        "Move a real Addressables provider into a separate integration assembly.")]
+    public sealed class AddressablesAssetProvider : IAssetProvider, IDisposable
     {
-        private readonly IObjectResolver objectResolver;
-        private readonly Dictionary<string, UnityEngine.Object> loadedAssets = new Dictionary<string, UnityEngine.Object>();
-        private readonly Dictionary<GameObject, string> instanceToKeyMap = new Dictionary<GameObject, string>();
+        private readonly ResourcesAssetProvider fallback;
 
         public AddressablesAssetProvider(IObjectResolver objectResolver = null)
         {
-            this.objectResolver = objectResolver;
+            fallback = new ResourcesAssetProvider(objectResolver);
         }
 
-        public async UniTask<T> LoadAssetAsync<T>(string key, CancellationToken cancellationToken = default) where T : UnityEngine.Object
+        public UniTask<T> LoadAssetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default)
+            where T : UnityEngine.Object
         {
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                BaseLog.LogError("[AddressablesAssetProvider] Asset key is null or empty.");
-                return null;
-            }
-
-            if (loadedAssets.TryGetValue(key, out var cached) && cached is T typedCached)
-            {
-                return typedCached;
-            }
-
-#if ADDRESSABLES_PRESENT
-            var handle = Addressables.LoadAssetAsync<T>(key);
-            var asset = await handle.WithCancellation(cancellationToken);
-            if (asset != null)
-            {
-                loadedAssets[key] = asset;
-            }
-            return asset;
-#else
-            var request = Resources.LoadAsync<T>(key);
-            await request.WithCancellation(cancellationToken);
-            var loaded = request.asset as T;
-            if (loaded != null)
-            {
-                loadedAssets[key] = loaded;
-            }
-            return loaded;
-#endif
+            return fallback.LoadAssetAsync<T>(key, cancellationToken);
         }
 
-        public async UniTask<GameObject> InstantiateAsync(string key, Transform parent = null, CancellationToken cancellationToken = default)
+        public UniTask<GameObject> InstantiateAsync(
+            string key,
+            Transform parent = null,
+            CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(key))
-            {
-                return null;
-            }
-
-#if ADDRESSABLES_PRESENT
-            var handle = Addressables.InstantiateAsync(key, parent);
-            var instance = await handle.WithCancellation(cancellationToken);
-            if (instance != null)
-            {
-                if (objectResolver != null)
-                {
-                    objectResolver.InjectGameObject(instance);
-                }
-                instanceToKeyMap[instance] = key;
-            }
-            return instance;
-#else
-            var prefab = await LoadAssetAsync<GameObject>(key, cancellationToken);
-            if (prefab == null) return null;
-
-            GameObject instance;
-            if (objectResolver != null)
-            {
-                instance = objectResolver.Instantiate(prefab, parent);
-            }
-            else
-            {
-                instance = Object.Instantiate(prefab, parent, false);
-            }
-
-            if (instance != null)
-            {
-                instanceToKeyMap[instance] = key;
-            }
-            return instance;
-#endif
+            return fallback.InstantiateAsync(key, parent, cancellationToken);
         }
 
-        public async UniTask<T> InstantiateAsync<T>(string key, Transform parent = null, CancellationToken cancellationToken = default) where T : Component
+        public UniTask<T> InstantiateAsync<T>(
+            string key,
+            Transform parent = null,
+            CancellationToken cancellationToken = default)
+            where T : Component
         {
-            var instance = await InstantiateAsync(key, parent, cancellationToken);
-            return instance != null ? instance.GetComponent<T>() : null;
+            return fallback.InstantiateAsync<T>(key, parent, cancellationToken);
         }
 
         public void ReleaseAsset<T>(T asset) where T : UnityEngine.Object
         {
-            if (asset == null) return;
-
-#if ADDRESSABLES_PRESENT
-            Addressables.Release(asset);
-#else
-            Resources.UnloadUnusedAssets();
-#endif
+            fallback.ReleaseAsset(asset);
         }
 
         public void ReleaseInstance(GameObject instance)
         {
-            if (instance == null) return;
+            fallback.ReleaseInstance(instance);
+        }
 
-#if ADDRESSABLES_PRESENT
-            Addressables.ReleaseInstance(instance);
-#else
-            Object.Destroy(instance);
-#endif
+        public void Dispose()
+        {
+            fallback.Dispose();
         }
     }
 }

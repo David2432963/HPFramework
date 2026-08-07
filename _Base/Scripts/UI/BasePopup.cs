@@ -1,13 +1,10 @@
+using System.Collections;
 using UnityEngine;
-using DG.Tweening;
-using Base.UI;
-using Base;
 using VContainer;
+using Base.UI;
 
 /// <summary>
-/// Base class for popup UI that may be closed by back button.
-/// Includes transition animation support using DOTween and CanvasGroup interactivity management.
-/// Supports VContainer dependency injection for IUIService.
+/// Base popup with coroutine-driven unscaled-time transitions.
 /// </summary>
 [RequireComponent(typeof(CanvasGroup))]
 public class BasePopup : MonoBehaviour
@@ -19,7 +16,7 @@ public class BasePopup : MonoBehaviour
     private RectTransform rectTransform;
     private Vector3 originalScale;
     private Vector2 originalAnchoredPosition;
-    private Tween activeTween;
+    private Coroutine activeTransition;
 
     protected IUIService uiService;
 
@@ -35,228 +32,232 @@ public class BasePopup : MonoBehaviour
         {
             if (canvasGroup == null)
             {
-                TryGetComponent(out canvasGroup);
+                canvasGroup = GetComponent<CanvasGroup>();
             }
+
             return canvasGroup;
         }
     }
 
     protected virtual void Awake()
     {
-        TryGetComponent(out canvasGroup);
-        TryGetComponent(out rectTransform);
+        canvasGroup = GetComponent<CanvasGroup>();
+        rectTransform = transform as RectTransform;
+        originalScale = transform.localScale;
         if (rectTransform != null)
         {
-            originalScale = rectTransform.localScale;
             originalAnchoredPosition = rectTransform.anchoredPosition;
-        }
-        else
-        {
-            originalScale = transform.localScale;
         }
     }
 
     public virtual void Show()
     {
-        BaseLog.Log($"[UI] Show Popup: {gameObject.name}");
         gameObject.SetActive(true);
-        KillActiveTween();
-
-        if (animationPreset == null || animationPreset.ShowType == UIAnimationType.None)
-        {
-            CanvasGroup.alpha = 1f;
-            CanvasGroup.interactable = true;
-            CanvasGroup.blocksRaycasts = true;
-            if (rectTransform != null)
-            {
-                rectTransform.localScale = originalScale;
-                rectTransform.anchoredPosition = originalAnchoredPosition;
-            }
-            OnShow();
-            NotifyManagerShown();
-            return;
-        }
+        StopActiveTransition();
+        ResetTransformState();
 
         CanvasGroup.interactable = false;
         CanvasGroup.blocksRaycasts = true;
 
-        switch (animationPreset.ShowType)
+        if (animationPreset == null
+            || animationPreset.ShowType == UIAnimationType.None
+            || animationPreset.ShowDuration <= 0f)
         {
-            case UIAnimationType.Fade:
-                CanvasGroup.alpha = 0f;
-                activeTween = CanvasGroup.DOFade(1f, animationPreset.ShowDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.ShowEase)
-                    .OnComplete(CompleteShow);
-                break;
-
-            case UIAnimationType.Scale:
-                CanvasGroup.alpha = 1f;
-                rectTransform.localScale = Vector3.zero;
-                activeTween = rectTransform.DOScale(originalScale, animationPreset.ShowDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.ShowEase)
-                    .OnComplete(CompleteShow);
-                break;
-
-            case UIAnimationType.Slide:
-                CanvasGroup.alpha = 1f;
-                rectTransform.localScale = originalScale;
-                rectTransform.anchoredPosition = originalAnchoredPosition + animationPreset.ShowStartOffset;
-                activeTween = rectTransform.DOAnchorPos(originalAnchoredPosition, animationPreset.ShowDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.ShowEase)
-                    .OnComplete(CompleteShow);
-                break;
-
-            case UIAnimationType.FadeAndScale:
-                CanvasGroup.alpha = 0f;
-                rectTransform.localScale = originalScale * animationPreset.ShowStartScale;
-                Sequence seqFadeScale = DOTween.Sequence().SetUpdate(true);
-                seqFadeScale.Join(CanvasGroup.DOFade(1f, animationPreset.ShowDuration).SetEase(animationPreset.ShowEase));
-                seqFadeScale.Join(rectTransform.DOScale(originalScale, animationPreset.ShowDuration).SetEase(animationPreset.ShowEase));
-                seqFadeScale.OnComplete(CompleteShow);
-                activeTween = seqFadeScale;
-                break;
-
-            case UIAnimationType.SlideAndFade:
-                CanvasGroup.alpha = 0f;
-                rectTransform.localScale = originalScale;
-                rectTransform.anchoredPosition = originalAnchoredPosition + animationPreset.ShowStartOffset;
-                Sequence seqSlideFade = DOTween.Sequence().SetUpdate(true);
-                seqSlideFade.Join(CanvasGroup.DOFade(1f, animationPreset.ShowDuration).SetEase(animationPreset.ShowEase));
-                seqSlideFade.Join(rectTransform.DOAnchorPos(originalAnchoredPosition, animationPreset.ShowDuration).SetEase(animationPreset.ShowEase));
-                seqSlideFade.OnComplete(CompleteShow);
-                activeTween = seqSlideFade;
-                break;
-
-            case UIAnimationType.ElasticScale:
-                CanvasGroup.alpha = 1f;
-                rectTransform.localScale = Vector3.zero;
-                activeTween = rectTransform.DOScale(originalScale, animationPreset.ShowDuration)
-                    .SetUpdate(true)
-                    .SetEase(Ease.OutElastic)
-                    .OnComplete(CompleteShow);
-                break;
-
-            case UIAnimationType.PunchScale:
-                CanvasGroup.alpha = 1f;
-                rectTransform.localScale = originalScale;
-                activeTween = rectTransform.DOPunchScale(originalScale * 0.15f, animationPreset.ShowDuration, 5, 0.5f)
-                    .SetUpdate(true)
-                    .OnComplete(CompleteShow);
-                break;
+            CompleteShow();
+            return;
         }
+
+        activeTransition = StartCoroutine(PlayShowTransition());
     }
 
     public virtual void Hide()
     {
-        BaseLog.Log($"[UI] Hide Popup: {gameObject.name}");
-        KillActiveTween();
+        StopActiveTransition();
         OnHide();
-
         CanvasGroup.interactable = false;
         CanvasGroup.blocksRaycasts = false;
 
-        if (animationPreset == null || animationPreset.HideType == UIAnimationType.None)
+        if (animationPreset == null
+            || animationPreset.HideType == UIAnimationType.None
+            || animationPreset.HideDuration <= 0f)
         {
-            CanvasGroup.alpha = 0f;
-            gameObject.SetActive(false);
-            NotifyManagerHidden();
+            CompleteHide();
             return;
         }
 
-        switch (animationPreset.HideType)
+        activeTransition = StartCoroutine(PlayHideTransition());
+    }
+
+    private IEnumerator PlayShowTransition()
+    {
+        UIAnimationType type = animationPreset.ShowType;
+        float duration = Mathf.Max(0.001f, animationPreset.ShowDuration);
+        Vector3 startScale = originalScale;
+        Vector2 startPosition = originalAnchoredPosition;
+        float startAlpha = 1f;
+
+        switch (type)
         {
             case UIAnimationType.Fade:
-                activeTween = CanvasGroup.DOFade(0f, animationPreset.HideDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.HideEase)
-                    .OnComplete(CompleteHide);
+                startAlpha = 0f;
                 break;
-
             case UIAnimationType.Scale:
-                activeTween = rectTransform.DOScale(Vector3.zero, animationPreset.HideDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.HideEase)
-                    .OnComplete(CompleteHide);
-                break;
-
-            case UIAnimationType.Slide:
-                Vector2 targetPos = originalAnchoredPosition + animationPreset.HideEndOffset;
-                activeTween = rectTransform.DOAnchorPos(targetPos, animationPreset.HideDuration)
-                    .SetUpdate(true)
-                    .SetEase(animationPreset.HideEase)
-                    .OnComplete(CompleteHide);
-                break;
-
-            case UIAnimationType.FadeAndScale:
-                Sequence seqFadeScale = DOTween.Sequence().SetUpdate(true);
-                seqFadeScale.Join(CanvasGroup.DOFade(0f, animationPreset.HideDuration).SetEase(animationPreset.HideEase));
-                seqFadeScale.Join(rectTransform.DOScale(originalScale * animationPreset.HideEndScale, animationPreset.HideDuration).SetEase(animationPreset.HideEase));
-                seqFadeScale.OnComplete(CompleteHide);
-                activeTween = seqFadeScale;
-                break;
-
-            case UIAnimationType.SlideAndFade:
-                Vector2 slideTarget = originalAnchoredPosition + animationPreset.HideEndOffset;
-                Sequence seqSlideFade = DOTween.Sequence().SetUpdate(true);
-                seqSlideFade.Join(CanvasGroup.DOFade(0f, animationPreset.HideDuration).SetEase(animationPreset.HideEase));
-                seqSlideFade.Join(rectTransform.DOAnchorPos(slideTarget, animationPreset.HideDuration).SetEase(animationPreset.HideEase));
-                seqSlideFade.OnComplete(CompleteHide);
-                activeTween = seqSlideFade;
-                break;
-
             case UIAnimationType.ElasticScale:
-                activeTween = rectTransform.DOScale(Vector3.zero, animationPreset.HideDuration)
-                    .SetUpdate(true)
-                    .SetEase(Ease.InElastic)
-                    .OnComplete(CompleteHide);
+                startScale = Vector3.zero;
                 break;
-
             case UIAnimationType.PunchScale:
-                activeTween = rectTransform.DOScale(Vector3.zero, animationPreset.HideDuration)
-                    .SetUpdate(true)
-                    .SetEase(Ease.InBack)
-                    .OnComplete(CompleteHide);
+                startScale = originalScale * 0.85f;
+                break;
+            case UIAnimationType.Slide:
+                startPosition = originalAnchoredPosition + animationPreset.ShowStartOffset;
+                break;
+            case UIAnimationType.FadeAndScale:
+                startAlpha = 0f;
+                startScale = originalScale * animationPreset.ShowStartScale;
+                break;
+            case UIAnimationType.SlideAndFade:
+                startAlpha = 0f;
+                startPosition = originalAnchoredPosition + animationPreset.ShowStartOffset;
                 break;
         }
+
+        CanvasGroup.alpha = startAlpha;
+        transform.localScale = startScale;
+        if (rectTransform != null)
+        {
+            rectTransform.anchoredPosition = startPosition;
+        }
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float normalized = Mathf.Clamp01(elapsed / duration);
+            float t = animationPreset.EvaluateShow(normalized);
+            if (type == UIAnimationType.PunchScale)
+            {
+                t = Mathf.Clamp01(t);
+                float punch = Mathf.Sin(t * Mathf.PI) * (1f - t) * 0.12f;
+                transform.localScale = Vector3.LerpUnclamped(
+                    startScale,
+                    originalScale,
+                    t) + originalScale * punch;
+            }
+            else
+            {
+                transform.localScale = Vector3.LerpUnclamped(startScale, originalScale, t);
+            }
+
+            CanvasGroup.alpha = Mathf.LerpUnclamped(startAlpha, 1f, t);
+            if (rectTransform != null)
+            {
+                rectTransform.anchoredPosition = Vector2.LerpUnclamped(
+                    startPosition,
+                    originalAnchoredPosition,
+                    t);
+            }
+
+            yield return null;
+        }
+
+        CompleteShow();
+    }
+
+    private IEnumerator PlayHideTransition()
+    {
+        UIAnimationType type = animationPreset.HideType;
+        float duration = Mathf.Max(0.001f, animationPreset.HideDuration);
+        Vector3 startScale = transform.localScale;
+        Vector3 endScale = originalScale;
+        Vector2 startPosition = rectTransform != null
+            ? rectTransform.anchoredPosition
+            : originalAnchoredPosition;
+        Vector2 endPosition = originalAnchoredPosition;
+        float startAlpha = CanvasGroup.alpha;
+        float endAlpha = startAlpha;
+
+        switch (type)
+        {
+            case UIAnimationType.Fade:
+                endAlpha = 0f;
+                break;
+            case UIAnimationType.Scale:
+            case UIAnimationType.ElasticScale:
+            case UIAnimationType.PunchScale:
+                endScale = Vector3.zero;
+                break;
+            case UIAnimationType.Slide:
+                endPosition = originalAnchoredPosition + animationPreset.HideEndOffset;
+                break;
+            case UIAnimationType.FadeAndScale:
+                endAlpha = 0f;
+                endScale = originalScale * animationPreset.HideEndScale;
+                break;
+            case UIAnimationType.SlideAndFade:
+                endAlpha = 0f;
+                endPosition = originalAnchoredPosition + animationPreset.HideEndOffset;
+                break;
+        }
+
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = animationPreset.EvaluateHide(elapsed / duration);
+            transform.localScale = Vector3.LerpUnclamped(startScale, endScale, t);
+            CanvasGroup.alpha = Mathf.LerpUnclamped(startAlpha, endAlpha, t);
+            if (rectTransform != null)
+            {
+                rectTransform.anchoredPosition = Vector2.LerpUnclamped(
+                    startPosition,
+                    endPosition,
+                    t);
+            }
+
+            yield return null;
+        }
+
+        CompleteHide();
     }
 
     private void CompleteShow()
     {
-        activeTween = null;
+        activeTransition = null;
+        ResetTransformState();
         CanvasGroup.alpha = 1f;
         CanvasGroup.interactable = true;
-        if (rectTransform != null)
-        {
-            rectTransform.localScale = originalScale;
-            rectTransform.anchoredPosition = originalAnchoredPosition;
-        }
+        CanvasGroup.blocksRaycasts = true;
         OnShow();
-        NotifyManagerShown();
+        uiService?.NotifyPopupShown(this);
     }
 
     private void CompleteHide()
     {
-        activeTween = null;
+        activeTransition = null;
         CanvasGroup.alpha = 0f;
-        if (rectTransform != null)
-        {
-            rectTransform.localScale = originalScale;
-            rectTransform.anchoredPosition = originalAnchoredPosition;
-        }
+        ResetTransformState();
         gameObject.SetActive(false);
-        NotifyManagerHidden();
+        uiService?.NotifyPopupHidden(this);
     }
 
-    private void KillActiveTween()
+    private void ResetTransformState()
     {
-        if (activeTween != null)
+        transform.localScale = originalScale;
+        if (rectTransform != null)
         {
-            activeTween.Kill();
-            activeTween = null;
+            rectTransform.anchoredPosition = originalAnchoredPosition;
         }
+    }
+
+    private void StopActiveTransition()
+    {
+        if (activeTransition == null)
+        {
+            return;
+        }
+
+        StopCoroutine(activeTransition);
+        activeTransition = null;
     }
 
     public void Close()
@@ -264,7 +265,7 @@ public class BasePopup : MonoBehaviour
         Hide();
     }
 
-    public bool IsVisible => CanvasGroup.alpha > 0f && gameObject.activeSelf;
+    public bool IsVisible => gameObject.activeSelf && CanvasGroup.alpha > 0f;
 
     protected virtual void OnShow()
     {
@@ -274,35 +275,22 @@ public class BasePopup : MonoBehaviour
     {
     }
 
-    private void NotifyManagerShown()
-    {
-        if (uiService != null)
-        {
-            uiService.NotifyPopupShown(this);
-        }
-    }
-
-    private void NotifyManagerHidden()
-    {
-        if (uiService != null)
-        {
-            uiService.NotifyPopupHidden(this);
-        }
-    }
-
     public virtual void Initialize()
     {
-        BaseLog.Log($"[UI] Initialize Popup: {gameObject.name}");
     }
 
     public virtual void Destroy()
     {
-        BaseLog.Log($"[UI] Destroy Popup: {gameObject.name}");
-        Destroy(gameObject);
+        UnityEngine.Object.Destroy(gameObject);
+    }
+
+    protected virtual void OnDisable()
+    {
+        StopActiveTransition();
     }
 
     protected virtual void OnDestroy()
     {
-        KillActiveTween();
+        StopActiveTransition();
     }
 }

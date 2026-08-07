@@ -38,5 +38,8 @@ namespace Base.UI
 
         void LockInput(bool isLock);
         void ShowToast(string message);
+
+        void NotifyPopupShown(BasePopup popup);
+        void NotifyPopupHidden(BasePopup popup);
     }
 }

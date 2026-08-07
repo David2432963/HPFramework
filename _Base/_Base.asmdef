@@ -1,15 +1,13 @@
 {
     "name": "_Base",
-    "rootNamespace": "",
+    "rootNamespace": "Base",
     "references": [
-        "GUID:75469ad4d38634e559750d17036d5f7c",
-        "DOTween.Modules",
-        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.InputSystem",
+        "Unity.Newtonsoft.Json",
         "Unity.TextMeshPro",
+        "Unity.UGUI",
         "VContainer",
-        "UniTask",
-        "Unity.Addressables",
-        "Unity.ResourceManager"
+        "UniTask"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -18,12 +16,6 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [
-        {
-            "name": "com.unity.addressables",
-            "expression": "",
-            "define": "ADDRESSABLES_PRESENT"
-        }
-    ],
+    "versionDefines": [],
     "noEngineReferences": false
 }

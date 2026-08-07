@@ -1,3 +1,4 @@
+using System;
 using UnityEditor;
 using UnityEngine;
 using Base.Bootstrap;
@@ -9,32 +10,53 @@ namespace Base.Editor
         [MenuItem("Base/Create Bootstrap Prefab", false, 10)]
         public static void CreateBootstrapPrefab()
         {
-            string prefabPath = "Assets/_Base/Prefabs/Bootstrap.prefab";
+            const string prefabDirectory = "Assets/_Base/Prefabs";
+            const string prefabPath = prefabDirectory + "/Bootstrap.prefab";
 
-            // Create a temporary GameObject
-            GameObject go = new GameObject("Bootstrap");
-            
-            // Add RootLifetimeScope (this acts as the core of the Bootstrap)
-            var scope = go.AddComponent<RootLifetimeScope>();
-            
-            // Run the auto-setup methods to populate managers and children (Camera, Canvas, etc.)
-            scope.AutoSetupHierarchy();
-            scope.AutoSetupScriptableObjects();
+            EnsureFolder(prefabDirectory);
 
-            // Ensure the Prefabs folder exists
-            if (!AssetDatabase.IsValidFolder("Assets/_Base/Prefabs"))
+            GameObject root = new GameObject("Bootstrap");
+            try
             {
-                AssetDatabase.CreateFolder("Assets/_Base", "Prefabs");
-            }
+                RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
+                RootLifetimeScopeEditor.AutoSetupHierarchy(scope);
+                RootLifetimeScopeEditor.AutoSetupScriptableObjects(scope);
 
-            // Save as Prefab
-            PrefabUtility.SaveAsPrefabAsset(go, prefabPath);
-            
-            // Destroy the temporary GameObject
-            GameObject.DestroyImmediate(go);
-            
-            Debug.Log($"[Bootstrap] Successfully created Bootstrap prefab at {prefabPath}");
-            AssetDatabase.Refresh();
+                GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                if (prefab == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Unity failed to save Bootstrap prefab at '{prefabPath}'.");
+                }
+
+                Selection.activeObject = prefab;
+                EditorGUIUtility.PingObject(prefab);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                Debug.Log($"[Bootstrap] Created a valid prefab at {prefabPath}");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        private static void EnsureFolder(string path)
+        {
+            string normalized = path.Replace('\\', '/');
+            string[] segments = normalized.Split('/');
+            string current = segments[0];
+
+            for (int i = 1; i < segments.Length; i++)
+            {
+                string next = current + "/" + segments[i];
+                if (!AssetDatabase.IsValidFolder(next))
+                {
+                    AssetDatabase.CreateFolder(current, segments[i]);
+                }
+
+                current = next;
+            }
         }
     }
 }

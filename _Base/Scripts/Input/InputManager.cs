@@ -1,79 +1,99 @@
+using System;
+using Base;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using VContainer.Unity;
 
 /// <summary>
-/// Input action map controller for shared runtime input state managed by VContainer.
+/// Shared Input System context controller. Only one action map is enabled at a time.
 /// </summary>
-public sealed class InputManager : MonoBehaviour
+public sealed class InputManager : MonoBehaviour, IInitializable, IDisposable
 {
-    private InputActionAsset inputActions;
+    [SerializeField] private InputActionAsset inputActions;
+    [SerializeField] private string defaultActionMap;
+    [SerializeField] private bool enableDefaultMapOnInitialize = true;
+
     private string currentMapName;
+    private bool initialized;
 
-    private void Awake()
-    {
-        Initialize();
-    }
+    public InputActionAsset InputActions => inputActions;
+    public string CurrentMapName => currentMapName;
 
-    /// <summary>
-    /// Reset the runtime input state for a fresh session.
-    /// </summary>
     public void Initialize()
     {
-        DisableCurrentMap();
-        currentMapName = null;
-    }
-
-    /// <summary>
-    /// Provide the input action asset used by this manager.
-    /// </summary>
-    public void SetInputActions(InputActionAsset asset)
-    {
-        if (ReferenceEquals(inputActions, asset))
+        if (initialized)
         {
             return;
         }
 
-        DisableCurrentMap();
-        inputActions = asset;
+        inputActions?.Disable();
         currentMapName = null;
+        initialized = true;
+
+        if (enableDefaultMapOnInitialize && !string.IsNullOrWhiteSpace(defaultActionMap))
+        {
+            if (!TryEnableMap(defaultActionMap))
+            {
+                BaseLog.LogWarning(
+                    $"[Input] Default action map '{defaultActionMap}' was not found.");
+            }
+        }
     }
 
-    /// <summary>
-    /// Enable the named action map when it exists.
-    /// </summary>
+    public void SetInputActions(InputActionAsset asset, string initialMap = null)
+    {
+        if (ReferenceEquals(inputActions, asset))
+        {
+            if (!string.IsNullOrWhiteSpace(initialMap))
+            {
+                TrySwitchMap(initialMap);
+            }
+            return;
+        }
+
+        DisableCurrentMap();
+        inputActions?.Disable();
+        inputActions = asset;
+        currentMapName = null;
+
+        if (!string.IsNullOrWhiteSpace(initialMap))
+        {
+            TryEnableMap(initialMap);
+        }
+    }
+
     public bool TryEnableMap(string mapName)
     {
-        if (!InputActionMapFacade.EnableActionMap(inputActions, mapName))
+        if (!InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
         {
             return false;
         }
 
+        if (!string.IsNullOrWhiteSpace(currentMapName)
+            && !string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+        {
+            DisableCurrentMap();
+        }
+
+        actionMap.Enable();
         currentMapName = mapName;
         return true;
     }
 
-    /// <summary>
-    /// Disable the named action map when it exists.
-    /// </summary>
     public bool TryDisableMap(string mapName)
     {
-        var wasCurrentMap = string.Equals(currentMapName, mapName);
         if (!InputActionMapFacade.DisableActionMap(inputActions, mapName))
         {
             return false;
         }
 
-        if (wasCurrentMap)
+        if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
         {
             currentMapName = null;
         }
-
         return true;
     }
 
-    /// <summary>
-    /// Disable the current map and switch to the requested one when it exists.
-    /// </summary>
     public bool TrySwitchMap(string mapName)
     {
         if (string.IsNullOrWhiteSpace(mapName))
@@ -81,38 +101,34 @@ public sealed class InputManager : MonoBehaviour
             return false;
         }
 
-        if (string.Equals(currentMapName, mapName))
+        if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
         {
             return true;
         }
 
-        var previousMapName = currentMapName;
+        string previous = currentMapName;
         DisableCurrentMap();
-
         if (TryEnableMap(mapName))
         {
             return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(previousMapName))
+        if (!string.IsNullOrWhiteSpace(previous))
         {
-            TryEnableMap(previousMapName);
+            TryEnableMap(previous);
         }
-
         return false;
     }
 
-    /// <summary>
-    /// Try to get an action from the configured input asset.
-    /// </summary>
     public bool TryGetAction(string mapName, string actionName, out InputAction action)
     {
-        return InputActionMapFacade.TryGetAction(inputActions, mapName, actionName, out action);
+        return InputActionMapFacade.TryGetAction(
+            inputActions,
+            mapName,
+            actionName,
+            out action);
     }
 
-    /// <summary>
-    /// Disable the current action map when one is active.
-    /// </summary>
     public void DisableCurrentMap()
     {
         if (string.IsNullOrWhiteSpace(currentMapName))
@@ -124,11 +140,12 @@ public sealed class InputManager : MonoBehaviour
         currentMapName = null;
     }
 
-    /// <summary>
-    /// Get the currently enabled map name, if any.
-    /// </summary>
-    public string GetCurrentMapName()
+    public string GetCurrentMapName() => currentMapName;
+
+    public void Dispose()
     {
-        return currentMapName;
+        DisableCurrentMap();
+        inputActions?.Disable();
+        initialized = false;
     }
 }

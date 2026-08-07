@@ -4,81 +4,94 @@ using UnityEngine;
 namespace Base.UI.TMP
 {
     /// <summary>
-    /// Prevents Material/Memory leaks when modifying TextMeshPro material properties at runtime (Outline, Glow, Face Color).
-    /// Tracks instantiated Material references and cleans them up on Destroy.
+    /// Owns a dedicated TMP material instance and restores the shared material on teardown.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(TMP_Text))]
     public sealed class TMPMaterialInstance : MonoBehaviour
     {
         private TMP_Text textComponent;
+        private Material originalSharedMaterial;
         private Material customMaterialInstance;
 
         private void Awake()
         {
             textComponent = GetComponent<TMP_Text>();
+            originalSharedMaterial = textComponent.fontSharedMaterial;
         }
 
-        /// <summary>
-        /// Gets or creates a safe runtime material instance for this TMP component.
-        /// </summary>
         public Material MaterialInstance
         {
             get
             {
                 if (customMaterialInstance == null && textComponent != null)
                 {
-                    customMaterialInstance = textComponent.fontMaterial;
+                    Material source = originalSharedMaterial != null
+                        ? originalSharedMaterial
+                        : textComponent.fontSharedMaterial;
+                    if (source == null)
+                    {
+                        return null;
+                    }
+
+                    customMaterialInstance = new Material(source)
+                    {
+                        name = source.name + " (TMP Instance)"
+                    };
+                    textComponent.fontMaterial = customMaterialInstance;
                 }
+
                 return customMaterialInstance;
             }
         }
 
         public void SetOutlineColor(Color color)
         {
-            if (MaterialInstance != null)
-            {
-                MaterialInstance.SetColor(ShaderUtilities.ID_OutlineColor, color);
-            }
+            MaterialInstance?.SetColor(ShaderUtilities.ID_OutlineColor, color);
         }
 
         public void SetOutlineWidth(float width)
         {
-            if (MaterialInstance != null)
-            {
-                MaterialInstance.SetFloat(ShaderUtilities.ID_OutlineWidth, width);
-            }
+            MaterialInstance?.SetFloat(
+                ShaderUtilities.ID_OutlineWidth,
+                Mathf.Max(0f, width));
         }
 
         public void SetGlow(Color color, float power = 0.5f)
         {
-            if (MaterialInstance != null)
+            Material material = MaterialInstance;
+            if (material == null)
             {
-                MaterialInstance.EnableKeyword(ShaderUtilities.Keyword_Glow);
-                MaterialInstance.SetColor(ShaderUtilities.ID_GlowColor, color);
-                MaterialInstance.SetFloat(ShaderUtilities.ID_GlowPower, power);
+                return;
             }
+
+            material.EnableKeyword(ShaderUtilities.Keyword_Glow);
+            material.SetColor(ShaderUtilities.ID_GlowColor, color);
+            material.SetFloat(ShaderUtilities.ID_GlowPower, Mathf.Max(0f, power));
         }
 
         private void OnDestroy()
         {
-            CleanUpMaterial();
-        }
-
-        private void CleanUpMaterial()
-        {
-            if (customMaterialInstance != null)
+            if (textComponent != null && originalSharedMaterial != null)
             {
-                if (Application.isPlaying)
-                {
-                    Destroy(customMaterialInstance);
-                }
-                else
-                {
-                    DestroyImmediate(customMaterialInstance);
-                }
-                customMaterialInstance = null;
+                textComponent.fontSharedMaterial = originalSharedMaterial;
             }
+
+            if (customMaterialInstance == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(customMaterialInstance);
+            }
+            else
+            {
+                DestroyImmediate(customMaterialInstance);
+            }
+
+            customMaterialInstance = null;
         }
     }
 }

@@ -1,0 +1,17 @@
+{
+    "name": "Base.Diagnostics",
+    "rootNamespace": "Base.Diagnostics",
+    "references": [
+        "_Base",
+        "Unity.UGUI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

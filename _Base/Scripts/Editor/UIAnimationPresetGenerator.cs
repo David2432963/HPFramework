@@ -1,66 +1,94 @@
 using UnityEngine;
 using UnityEditor;
 using Base.UI;
-using DG.Tweening;
 
 namespace Base.Editor.UI
 {
     public static class UIAnimationPresetGenerator
     {
-        [MenuItem("Tools/Keyboard Escape/Generate Base UI Animations")]
+        [MenuItem("Base/Generate UI Animation Presets", false, 30)]
         public static void GeneratePresets()
         {
-            string folderPath = "Assets/_Base/Datas/UI/Animations";
-            if (!AssetDatabase.IsValidFolder("Assets/_Base/Datas"))
-                AssetDatabase.CreateFolder("Assets/_Base", "Datas");
-            if (!AssetDatabase.IsValidFolder("Assets/_Base/Datas/UI"))
-                AssetDatabase.CreateFolder("Assets/_Base/Datas", "UI");
-            if (!AssetDatabase.IsValidFolder(folderPath))
-                AssetDatabase.CreateFolder("Assets/_Base/Datas/UI", "Animations");
+            const string folderPath = "Assets/_Base/Data/UI/Animations";
+            EnsureFolder(folderPath);
 
-            CreatePreset(folderPath, "Anim_FadeAndScale", UIAnimationType.FadeAndScale, 0.3f, Ease.OutBack, new Vector2(0, 0), 0.7f,
-                                                        UIAnimationType.FadeAndScale, 0.2f, Ease.InBack, new Vector2(0, 0), 0.7f);
+            CreatePreset(
+                folderPath,
+                "Anim_FadeAndScale",
+                UIAnimationType.FadeAndScale,
+                0.3f,
+                EaseOutBack(),
+                Vector2.zero,
+                0.7f,
+                UIAnimationType.FadeAndScale,
+                0.2f,
+                EaseInBack(),
+                Vector2.zero,
+                0.7f);
 
-            CreatePreset(folderPath, "Anim_SlideUpFade", UIAnimationType.SlideAndFade, 0.4f, Ease.OutCubic, new Vector2(0, -200f), 1f,
-                                                       UIAnimationType.SlideAndFade, 0.25f, Ease.InCubic, new Vector2(0, -200f), 1f);
+            CreatePreset(
+                folderPath,
+                "Anim_SlideUpFade",
+                UIAnimationType.SlideAndFade,
+                0.4f,
+                EaseOutCubic(),
+                new Vector2(0f, -200f),
+                1f,
+                UIAnimationType.SlideAndFade,
+                0.25f,
+                EaseInCubic(),
+                new Vector2(0f, -200f),
+                1f);
 
-            CreatePreset(folderPath, "Anim_ElasticPop", UIAnimationType.ElasticScale, 0.6f, Ease.OutElastic, new Vector2(0, 0), 0f,
-                                                      UIAnimationType.Scale, 0.2f, Ease.InBack, new Vector2(0, 0), 0f);
-
-            CreatePreset(folderPath, "Anim_PunchFocus", UIAnimationType.PunchScale, 0.4f, Ease.OutQuad, new Vector2(0, 0), 1f,
-                                                      UIAnimationType.FadeAndScale, 0.2f, Ease.InQuad, new Vector2(0, 0), 0.8f);
-
-            CreatePreset(folderPath, "Anim_SlideRightFade", UIAnimationType.SlideAndFade, 0.35f, Ease.OutQuart, new Vector2(-300f, 0), 1f,
-                                                          UIAnimationType.SlideAndFade, 0.25f, Ease.InQuart, new Vector2(-300f, 0), 1f);
+            CreatePreset(
+                folderPath,
+                "Anim_ElasticPop",
+                UIAnimationType.ElasticScale,
+                0.6f,
+                ElasticOut(),
+                Vector2.zero,
+                0f,
+                UIAnimationType.Scale,
+                0.2f,
+                EaseInBack(),
+                Vector2.zero,
+                0f);
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log($"[UI] Successfully generated UI Animation Presets in {folderPath}");
+            Debug.Log($"[UI] Generated animation presets in {folderPath}");
         }
 
-        private static void CreatePreset(string folder, string name, 
-            UIAnimationType showType, float showDur, Ease showEase, Vector2 showOffset, float showScale,
-            UIAnimationType hideType, float hideDur, Ease hideEase, Vector2 hideOffset, float hideScale)
+        private static void CreatePreset(
+            string folder,
+            string name,
+            UIAnimationType showType,
+            float showDuration,
+            AnimationCurve showCurve,
+            Vector2 showOffset,
+            float showScale,
+            UIAnimationType hideType,
+            float hideDuration,
+            AnimationCurve hideCurve,
+            Vector2 hideOffset,
+            float hideScale)
         {
             string path = $"{folder}/{name}.asset";
             UIAnimationPresetSO preset = AssetDatabase.LoadAssetAtPath<UIAnimationPresetSO>(path);
-            
-            bool isNew = false;
-            if (preset == null)
+            bool isNew = preset == null;
+            if (isNew)
             {
                 preset = ScriptableObject.CreateInstance<UIAnimationPresetSO>();
-                isNew = true;
             }
 
             preset.ShowType = showType;
-            preset.ShowDuration = showDur;
-            preset.ShowEase = showEase;
+            preset.ShowDuration = showDuration;
+            preset.ShowCurve = showCurve;
             preset.ShowStartOffset = showOffset;
             preset.ShowStartScale = showScale;
-
             preset.HideType = hideType;
-            preset.HideDuration = hideDur;
-            preset.HideEase = hideEase;
+            preset.HideDuration = hideDuration;
+            preset.HideCurve = hideCurve;
             preset.HideEndOffset = hideOffset;
             preset.HideEndScale = hideScale;
 
@@ -71,6 +99,61 @@ namespace Base.Editor.UI
             else
             {
                 EditorUtility.SetDirty(preset);
+            }
+        }
+
+        private static AnimationCurve EaseOutCubic()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0f, 0f, 3f),
+                new Keyframe(1f, 1f, 0f, 0f));
+        }
+
+        private static AnimationCurve EaseInCubic()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0f, 0f, 0f),
+                new Keyframe(1f, 1f, 3f, 0f));
+        }
+
+        private static AnimationCurve EaseOutBack()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0f, 0f, 2.5f),
+                new Keyframe(0.75f, 1.08f, 0f, 0f),
+                new Keyframe(1f, 1f, -0.4f, 0f));
+        }
+
+        private static AnimationCurve EaseInBack()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0f, 0f, -0.4f),
+                new Keyframe(0.25f, -0.08f, 0f, 0f),
+                new Keyframe(1f, 1f, 2.5f, 0f));
+        }
+
+        private static AnimationCurve ElasticOut()
+        {
+            return new AnimationCurve(
+                new Keyframe(0f, 0f),
+                new Keyframe(0.55f, 1.15f),
+                new Keyframe(0.75f, 0.95f),
+                new Keyframe(0.9f, 1.03f),
+                new Keyframe(1f, 1f));
+        }
+
+        private static void EnsureFolder(string path)
+        {
+            string[] segments = path.Split('/');
+            string current = segments[0];
+            for (int i = 1; i < segments.Length; i++)
+            {
+                string next = current + "/" + segments[i];
+                if (!AssetDatabase.IsValidFolder(next))
+                {
+                    AssetDatabase.CreateFolder(current, segments[i]);
+                }
+                current = next;
             }
         }
     }

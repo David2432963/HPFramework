@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using Base.Extensions;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -9,6 +10,8 @@ namespace Base.Common
     {
         public static bool IsPointerOverUI()
         {
+            if (EventSystem.current == null) return false;
+
             if (EventSystem.current.IsPointerOverGameObject())
             {
                 return true;
@@ -25,6 +28,8 @@ namespace Base.Common
 
         public static bool IsPointerOverUIObject()
         {
+            if (EventSystem.current == null) return false;
+
             var eventDataCurrentPosition = new PointerEventData(EventSystem.current);
             eventDataCurrentPosition.position = new Vector2(Input.mousePosition.x, Input.mousePosition.y);
 
@@ -64,7 +69,7 @@ namespace Base.Common
                 Vector3 screenPoint = mainCamera.WorldToScreenPoint(pointTarget.position);
                 if (screenPoint.z < 0)
                 {
-                    MyLogger.LogWarning("Object is behind the main camera, unable to convert position.");
+                    BaseLog.LogWarning("Object is behind the main camera, unable to convert position.");
                     return Vector3.zero;
                 }
 

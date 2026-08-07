@@ -21,6 +21,9 @@ namespace Base.Common
         
         public static Vector3[] GetBezierCurve(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, int segments)
         {
+            if (segments <= 0) return Array.Empty<Vector3>();
+            if (segments == 1) return new[] { p0 };
+
             Vector3[] points = new Vector3[segments];
             for (int i = 0; i < segments; i++)
             {
@@ -65,6 +68,9 @@ namespace Base.Common
         
         public static Vector3[] GetCatmullRomCurve(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, int segments)
         {
+            if (segments <= 0) return Array.Empty<Vector3>();
+            if (segments == 1) return new[] { p1 };
+
             Vector3[] points = new Vector3[segments];
             for (int i = 0; i < segments; i++)
             {
@@ -173,9 +179,9 @@ namespace Base.Common
         }
 
 
-        public static Vector2 RotateAround(Vector2 center, Vector2 point, float angleInRadians)
+        public static Vector2 RotateAround(Vector2 center, Vector2 point, float angleInDegrees)
         {
-            angleInRadians *= Mathf.Deg2Rad;
+            float angleInRadians = angleInDegrees * Mathf.Deg2Rad;
             float cosTheta = Mathf.Cos(angleInRadians);
             float sinTheta = Mathf.Sin(angleInRadians);
             return new Vector2

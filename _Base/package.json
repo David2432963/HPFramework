@@ -1,11 +1,22 @@
 {
   "name": "com.base.vcontainer",
-  "version": "1.0.0",
-  "displayName": "_Base VContainer Framework",
-  "description": "Standalone, self-contained architecture base package built with VContainer DI framework.",
+  "version": "1.1.0",
+  "displayName": "Base VContainer Framework",
+  "description": "Reusable Unity architecture package with VContainer, UniTask, scene flow, UI, pooling, persistence and optional integrations.",
   "unity": "2021.3",
   "author": {
     "name": "Base Team"
   },
-  "dependencies": {}
+  "dependencies": {
+    "com.unity.inputsystem": "1.5.1",
+    "com.unity.nuget.newtonsoft-json": "3.0.2",
+    "com.unity.textmeshpro": "3.0.6",
+    "com.unity.ugui": "1.0.0"
+  },
+  "keywords": [
+    "architecture",
+    "dependency-injection",
+    "vcontainer",
+    "unitask"
+  ]
 }

@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Text.RegularExpressions;
-using DG.Tweening;
 using TMPro;
 using UnityEngine;
 using VContainer;
@@ -8,25 +10,31 @@ using Base.Audio;
 
 namespace Base.UI.TMP
 {
-    /// <summary>
-    /// DOTween-powered Typewriter component with support for rich-text tags, custom speech pause tags (&lt;pause=0.5&gt;), audio SFX, and instant Skip.
-    /// Supports VContainer dependency injection for IAudioService.
-    /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(TMP_Text))]
     public sealed class TMPTypewriter : MonoBehaviour
     {
-        [Header("Settings")]
-        [SerializeField] private float charactersPerSecond = 30f;
-        [SerializeField] private string typeAudioKey;
+        private static readonly Regex PauseTagRegex = new Regex(
+            @"<pause=(\d+(\.\d+)?)>",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex RichTextTagRegex = new Regex(
+            @"<[^>]+>",
+            RegexOptions.Compiled);
 
-        private static readonly Regex PauseTagRegex = new Regex(@"<pause=(\d+(\.\d+)?)>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        [SerializeField, Min(1f)] private float charactersPerSecond = 30f;
+        [SerializeField] private string typeAudioKey;
+        [SerializeField, Min(0f)] private float minimumAudioInterval = 0.05f;
+
+        private readonly Dictionary<int, float> pausesByCharacter =
+            new Dictionary<int, float>();
 
         private TMP_Text textComponent;
-        private Sequence typewriterSequence;
-        private string fullParsedText;
-        private Action onTypewriterComplete;
+        private Coroutine typewriterRoutine;
+        private string parsedText = string.Empty;
+        private Action completionCallback;
         private IAudioService audioService;
+
+        public bool IsTyping => typewriterRoutine != null;
 
         [Inject]
         public void Construct(IAudioService audioService)
@@ -39,6 +47,128 @@ namespace Base.UI.TMP
             textComponent = GetComponent<TMP_Text>();
         }
 
+        public void Play(string targetText, Action onComplete = null)
+        {
+            Stop();
+            completionCallback = onComplete;
+            BuildParsedText(targetText ?? string.Empty);
+
+            textComponent.text = parsedText;
+            textComponent.maxVisibleCharacters = 0;
+            textComponent.ForceMeshUpdate();
+
+            if (textComponent.textInfo.characterCount == 0 || !isActiveAndEnabled)
+            {
+                Complete();
+                return;
+            }
+
+            typewriterRoutine = StartCoroutine(TypewriterRoutine());
+        }
+
+        public void Skip()
+        {
+            if (!IsTyping)
+            {
+                return;
+            }
+
+            StopCoroutine(typewriterRoutine);
+            typewriterRoutine = null;
+            Complete();
+        }
+
+        public void Stop()
+        {
+            if (typewriterRoutine != null)
+            {
+                StopCoroutine(typewriterRoutine);
+                typewriterRoutine = null;
+            }
+
+            completionCallback = null;
+        }
+
+        private IEnumerator TypewriterRoutine()
+        {
+            int characterCount = textComponent.textInfo.characterCount;
+            float characterDelay = 1f / Mathf.Max(1f, charactersPerSecond);
+            float lastAudioTime = float.NegativeInfinity;
+
+            for (int visibleCount = 1; visibleCount <= characterCount; visibleCount++)
+            {
+                if (pausesByCharacter.TryGetValue(visibleCount - 1, out float pauseDuration)
+                    && pauseDuration > 0f)
+                {
+                    yield return new WaitForSecondsRealtime(pauseDuration);
+                }
+
+                textComponent.maxVisibleCharacters = visibleCount;
+                if (!string.IsNullOrWhiteSpace(typeAudioKey)
+                    && Time.unscaledTime - lastAudioTime >= minimumAudioInterval)
+                {
+                    audioService?.PlaySfx(typeAudioKey, 0.2f);
+                    lastAudioTime = Time.unscaledTime;
+                }
+
+                float elapsed = 0f;
+                while (elapsed < characterDelay)
+                {
+                    elapsed += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+            }
+
+            typewriterRoutine = null;
+            Complete();
+        }
+
+        private void BuildParsedText(string source)
+        {
+            pausesByCharacter.Clear();
+            int sourceIndex = 0;
+            int visibleCharacterCount = 0;
+
+            MatchCollection matches = PauseTagRegex.Matches(source);
+            foreach (Match match in matches)
+            {
+                string segment = source.Substring(sourceIndex, match.Index - sourceIndex);
+                visibleCharacterCount += CountVisibleCharacters(segment);
+
+                if (float.TryParse(
+                        match.Groups[1].Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out float duration))
+                {
+                    pausesByCharacter[visibleCharacterCount] = Mathf.Max(0f, duration);
+                }
+
+                sourceIndex = match.Index + match.Length;
+            }
+
+            parsedText = PauseTagRegex.Replace(source, string.Empty);
+        }
+
+        private static int CountVisibleCharacters(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 0;
+            }
+
+            return RichTextTagRegex.Replace(text, string.Empty).Length;
+        }
+
+        private void Complete()
+        {
+            textComponent.text = parsedText;
+            textComponent.maxVisibleCharacters = int.MaxValue;
+            Action callback = completionCallback;
+            completionCallback = null;
+            callback?.Invoke();
+        }
+
         private void OnDisable()
         {
             Stop();
@@ -47,115 +177,6 @@ namespace Base.UI.TMP
         private void OnDestroy()
         {
             Stop();
-        }
-
-        public void Play(string targetText, Action onComplete = null)
-        {
-            Stop();
-            onTypewriterComplete = onComplete;
-
-            if (string.IsNullOrEmpty(targetText))
-            {
-                if (textComponent != null) textComponent.text = string.Empty;
-                onTypewriterComplete?.Invoke();
-                return;
-            }
-
-            fullParsedText = targetText;
-            typewriterSequence = DOTween.Sequence().SetTarget(this);
-
-            MatchCollection matches = PauseTagRegex.Matches(targetText);
-            int lastIndex = 0;
-            string cleanAccumulatedText = string.Empty;
-
-            foreach (Match match in matches)
-            {
-                int matchIndex = match.Index;
-                if (matchIndex > lastIndex)
-                {
-                    string textSegment = targetText.Substring(lastIndex, matchIndex - lastIndex);
-                    AppendTextSegmentToSequence(textSegment, ref cleanAccumulatedText);
-                }
-
-                if (float.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pauseDuration))
-                {
-                    typewriterSequence.AppendInterval(pauseDuration);
-                }
-
-                lastIndex = matchIndex + match.Length;
-            }
-
-            if (lastIndex < targetText.Length)
-            {
-                string remainingText = targetText.Substring(lastIndex);
-                AppendTextSegmentToSequence(remainingText, ref cleanAccumulatedText);
-            }
-
-            typewriterSequence.OnComplete(() =>
-            {
-                if (textComponent != null) textComponent.text = RemovePauseTags(fullParsedText);
-                Action callback = onTypewriterComplete;
-                onTypewriterComplete = null;
-                callback?.Invoke();
-            });
-        }
-
-        public void Skip()
-        {
-            if (IsTyping)
-            {
-                typewriterSequence.Complete(true);
-            }
-        }
-
-        public void Stop()
-        {
-            if (typewriterSequence != null && typewriterSequence.IsActive())
-            {
-                typewriterSequence.Kill();
-                typewriterSequence = null;
-            }
-        }
-
-        public bool IsTyping => typewriterSequence != null && typewriterSequence.IsActive() && typewriterSequence.IsPlaying();
-
-        private void AppendTextSegmentToSequence(string segment, ref string accumulatedText)
-        {
-            string cleanSegment = RemovePauseTags(segment);
-            int segmentLength = cleanSegment.Length;
-            if (segmentLength <= 0) return;
-
-            float duration = segmentLength / Mathf.Max(1f, charactersPerSecond);
-            string previousText = accumulatedText;
-            accumulatedText += cleanSegment;
-
-            int currentVisibleCount = 0;
-            typewriterSequence.Append(DOTween.To(
-                () => currentVisibleCount,
-                x =>
-                {
-                    currentVisibleCount = x;
-                    if (textComponent != null)
-                    {
-                        textComponent.text = previousText + cleanSegment.Substring(0, Mathf.Min(x, cleanSegment.Length));
-                    }
-                    PlayTypeSound();
-                },
-                segmentLength,
-                duration).SetEase(Ease.Linear));
-        }
-
-        private string RemovePauseTags(string input)
-        {
-            return PauseTagRegex.Replace(input, string.Empty);
-        }
-
-        private void PlayTypeSound()
-        {
-            if (!string.IsNullOrEmpty(typeAudioKey) && audioService != null)
-            {
-                audioService.PlaySfx(typeAudioKey, 0.2f);
-            }
         }
     }
 }

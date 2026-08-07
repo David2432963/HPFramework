@@ -1,5 +1,5 @@
 using System;
-using DG.Tweening;
+using System.Collections;
 using TMPro;
 using UnityEngine;
 using VContainer;
@@ -7,24 +7,19 @@ using Base.Audio;
 
 namespace Base.UI.TMP
 {
-    /// <summary>
-    /// Component that animates numeric text values using DOTween with customizable easing, formatting, and optional audio key triggers.
-    /// Supports VContainer dependency injection for IAudioService.
-    /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(TMP_Text))]
     public sealed class TMPNumberCounter : MonoBehaviour
     {
-        [Header("Settings")]
         [SerializeField] private string format = "{0:N0}";
-        [SerializeField] private float duration = 1.0f;
-        [SerializeField] private Ease ease = Ease.OutQuad;
-
-        [Header("Audio (Optional)")]
+        [SerializeField, Min(0f)] private float duration = 1f;
+        [SerializeField] private AnimationCurve animationCurve =
+            AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
         [SerializeField] private string stepAudioKey;
+        [SerializeField, Min(0f)] private float minimumAudioInterval = 0.04f;
 
         private TMP_Text textComponent;
-        private Tweener countTweener;
+        private Coroutine countRoutine;
         private int currentValue;
         private IAudioService audioService;
 
@@ -39,45 +34,21 @@ namespace Base.UI.TMP
             textComponent = GetComponent<TMP_Text>();
         }
 
-        private void OnDisable()
-        {
-            Stop();
-        }
-
-        private void OnDestroy()
-        {
-            Stop();
-        }
-
         public void Play(int from, int to, Action onComplete = null)
         {
             Stop();
-
             currentValue = from;
             UpdateText(currentValue);
 
-            int lastValue = from;
+            if (duration <= 0f || !isActiveAndEnabled)
+            {
+                currentValue = to;
+                UpdateText(currentValue);
+                onComplete?.Invoke();
+                return;
+            }
 
-            countTweener = DOTween.To(
-                () => currentValue,
-                x =>
-                {
-                    currentValue = x;
-                    if (currentValue != lastValue)
-                    {
-                        lastValue = currentValue;
-                        PlayStepSound();
-                    }
-                    UpdateText(currentValue);
-                },
-                to,
-                duration)
-                .SetEase(ease)
-                .SetTarget(this)
-                .OnComplete(() =>
-                {
-                    onComplete?.Invoke();
-                });
+            countRoutine = StartCoroutine(CountRoutine(from, to, onComplete));
         }
 
         public void PlayTo(int targetValue, Action onComplete = null)
@@ -87,11 +58,44 @@ namespace Base.UI.TMP
 
         public void Stop()
         {
-            if (countTweener != null && countTweener.IsActive())
+            if (countRoutine == null) return;
+            StopCoroutine(countRoutine);
+            countRoutine = null;
+        }
+
+        private IEnumerator CountRoutine(int from, int to, Action onComplete)
+        {
+            float elapsed = 0f;
+            float lastAudioTime = float.NegativeInfinity;
+            int lastValue = from;
+
+            while (elapsed < duration)
             {
-                countTweener.Kill();
-                countTweener = null;
+                elapsed += Time.unscaledDeltaTime;
+                float normalized = Mathf.Clamp01(elapsed / duration);
+                float t = animationCurve == null
+                    ? normalized
+                    : animationCurve.Evaluate(normalized);
+                currentValue = Mathf.RoundToInt(Mathf.LerpUnclamped(from, to, t));
+
+                if (currentValue != lastValue)
+                {
+                    lastValue = currentValue;
+                    if (Time.unscaledTime - lastAudioTime >= minimumAudioInterval)
+                    {
+                        PlayStepSound();
+                        lastAudioTime = Time.unscaledTime;
+                    }
+                }
+
+                UpdateText(currentValue);
+                yield return null;
             }
+
+            currentValue = to;
+            UpdateText(currentValue);
+            countRoutine = null;
+            onComplete?.Invoke();
         }
 
         private void UpdateText(int value)
@@ -104,10 +108,13 @@ namespace Base.UI.TMP
 
         private void PlayStepSound()
         {
-            if (!string.IsNullOrEmpty(stepAudioKey) && audioService != null)
+            if (!string.IsNullOrWhiteSpace(stepAudioKey))
             {
-                audioService.PlaySfx(stepAudioKey, 0.3f);
+                audioService?.PlaySfx(stepAudioKey, 0.3f);
             }
         }
+
+        private void OnDisable() => Stop();
+        private void OnDestroy() => Stop();
     }
 }

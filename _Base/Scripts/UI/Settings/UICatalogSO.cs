@@ -1,21 +1,16 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using Sirenix.OdinInspector;
 
 namespace Base.UI
 {
     [CreateAssetMenu(fileName = "UICatalogSO", menuName = "Base/UI/UI Catalog")]
     public sealed class UICatalogSO : ScriptableObject
     {
-        [Title("🖥️ UI Catalog Registry", "Register all Popup and Screen prefabs for automatic UI management", TitleAlignments.Centered)]
-
-        [BoxGroup("Registered Popup Prefabs")]
-        [Searchable, TableList(AlwaysExpanded = true, DrawScrollView = true)]
+        [Header("Registered Popup Prefabs")]
         [SerializeField] private List<UIEntry> popupEntries = new List<UIEntry>();
 
-        [BoxGroup("Registered Screen Prefabs")]
-        [Searchable, TableList(AlwaysExpanded = true, DrawScrollView = true)]
+        [Header("Registered Screen Prefabs")]
         [SerializeField] private List<UIEntry> screenEntries = new List<UIEntry>();
 
         public IReadOnlyList<UIEntry> PopupEntries => popupEntries;
@@ -120,11 +115,8 @@ namespace Base.UI
         [Serializable]
         public sealed class UIEntry
         {
-            [TableColumnWidth(220, Resizable = true)]
-            [SerializeField, Required] private GameObject prefab;
-            [TableColumnWidth(110, Resizable = false)]
-            [SerializeField] private bool preloadOnBoot = true;
-            [TableColumnWidth(110, Resizable = false)]
+            [SerializeField] private GameObject prefab;
+            [SerializeField] private bool preloadOnBoot;
             [SerializeField] private bool cacheAfterClose = true;
 
             public GameObject Prefab => prefab;

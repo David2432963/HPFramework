@@ -2,30 +2,30 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEngine.Rendering.Universal;
+using System.Collections;
 using Base.UI;
 using Base.Pooling;
 using Base;
 using VContainer;
-using Sirenix.OdinInspector;
+using VContainer.Unity;
 
 /// <summary>
 /// UI Manager for screens and popups.
 /// Implements IUIService with VContainer native atomic instantiation (Instantiate + Inject in 1 step).
-/// Uses Odin Inspector attributes for rich editor formatting.
+/// Uses only Unity runtime dependencies; URP camera stacking is attached through reflection when available.
 /// </summary>
-public class UIManager : MonoBehaviour, IUIService
+public class UIManager : MonoBehaviour, IUIService, IInitializable
 {
-    [Title("📱 UI Canvases & Camera")]
-    [SerializeField, Required] private RectTransform screenCanvas;
-    [SerializeField, Required] private RectTransform popupCanvas;
-    [SerializeField, Required] private RectTransform notiCanvas;
-    [SerializeField, Required] private RectTransform lockCanvas;
-    [SerializeField, Required] private Camera uiCamera;
+    [Header("UI Canvases & Camera")]
+    [SerializeField] private RectTransform screenCanvas;
+    [SerializeField] private RectTransform popupCanvas;
+    [SerializeField] private RectTransform notiCanvas;
+    [SerializeField] private RectTransform lockCanvas;
+    [SerializeField] private Camera uiCamera;
 
-    [Title("📦 UI Database & Prefabs")]
-    [SerializeField, InlineEditor] private UICatalogSO uiCatalog;
-    [SerializeField, Required] private ToastUI toastPrefab;
+    [Header("UI Catalog & Prefabs")]
+    [SerializeField] private UICatalogSO uiCatalog;
+    [SerializeField] private ToastUI toastPrefab;
 
     private readonly Dictionary<Type, BasePopup> popups = new Dictionary<Type, BasePopup>();
     private readonly Dictionary<Type, BaseScreen> screens = new Dictionary<Type, BaseScreen>();
@@ -35,6 +35,7 @@ public class UIManager : MonoBehaviour, IUIService
 
     private IPoolService poolService;
     private IObjectResolver objectResolver;
+    private bool initialized;
 
     public event Action<BasePopup> PopupShown;
     public event Action<BasePopup> PopupHidden;
@@ -42,19 +43,10 @@ public class UIManager : MonoBehaviour, IUIService
     public Camera UICamera => uiCamera;
 
     [Inject]
-    public void Construct(IPoolService poolService, IObjectResolver objectResolver, UICatalogSO catalog = null)
+    public void Construct(IPoolService poolService, IObjectResolver objectResolver)
     {
         this.poolService = poolService;
         this.objectResolver = objectResolver;
-        if (catalog != null)
-        {
-            this.uiCatalog = catalog;
-        }
-    }
-
-    private void Awake()
-    {
-        Initialize();
     }
 
     private void OnEnable()
@@ -74,21 +66,40 @@ public class UIManager : MonoBehaviour, IUIService
 
     private void AttachUICameraToMainCamera()
     {
-        if (uiCamera == null) return;
-
-        Camera mainCam = Camera.main;
-        if (mainCam != null)
+        if (uiCamera == null)
         {
-            var cameraData = mainCam.GetComponent<UniversalAdditionalCameraData>();
-            if (cameraData != null && !cameraData.cameraStack.Contains(uiCamera))
-            {
-                cameraData.cameraStack.Add(uiCamera);
-            }
+            return;
+        }
+
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+        {
+            return;
+        }
+
+        Type cameraDataType = Type.GetType(
+            "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime");
+        if (cameraDataType == null)
+        {
+            return;
+        }
+
+        Component cameraData = mainCamera.GetComponent(cameraDataType);
+        System.Reflection.PropertyInfo stackProperty = cameraDataType.GetProperty("cameraStack");
+        IList cameraStack = stackProperty?.GetValue(cameraData) as IList;
+        if (cameraStack != null && !cameraStack.Contains(uiCamera))
+        {
+            cameraStack.Add(uiCamera);
         }
     }
 
     public void Initialize()
     {
+        if (initialized)
+        {
+            return;
+        }
+
         popups.Clear();
         screens.Clear();
         popupCatalogEntries.Clear();
@@ -113,8 +124,10 @@ public class UIManager : MonoBehaviour, IUIService
                 }
             }
 
-            PreloadCatalogEntries();
         }
+
+        initialized = true;
+        AttachUICameraToMainCamera();
     }
 
     public void ConfigureCatalog(UICatalogSO catalog)
@@ -125,6 +138,7 @@ public class UIManager : MonoBehaviour, IUIService
         }
 
         uiCatalog = catalog;
+        initialized = false;
         Initialize();
     }
 
@@ -349,46 +363,6 @@ public class UIManager : MonoBehaviour, IUIService
             return objectResolver.Instantiate(prefab, parent);
         }
         return Instantiate(prefab, parent, false);
-    }
-
-    private void PreloadCatalogEntries()
-    {
-        foreach (var entry in uiCatalog.GetPreloadEntries())
-        {
-            if (entry == null || entry.Prefab == null || !entry.TryGetRuntimeType(out var type))
-            {
-                continue;
-            }
-
-            if (popups.ContainsKey(type) || screens.ContainsKey(type))
-            {
-                continue;
-            }
-
-            bool isScreen = typeof(BaseScreen).IsAssignableFrom(type);
-            Transform parent = isScreen ? screenCanvas : popupCanvas;
-            GameObject instance = InstantiateWithVContainer(entry.Prefab, parent);
-            instance.SetActive(false);
-
-            if (isScreen)
-            {
-                var screen = instance.GetComponent<BaseScreen>();
-                if (screen != null)
-                {
-                    RegisterScreen(screen);
-                    screen.Initialize();
-                }
-            }
-            else
-            {
-                var popup = instance.GetComponent<BasePopup>();
-                if (popup != null)
-                {
-                    RegisterPopup(popup);
-                    popup.Initialize();
-                }
-            }
-        }
     }
 
     private bool TryGetOrCreatePopup(Type type, out BasePopup popup)

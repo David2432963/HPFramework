@@ -1,105 +1,146 @@
 using System;
 using System.IO;
-using UnityEngine;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using Base;
+using UnityEngine;
 
 /// <summary>
-/// JSON file helper for small reusable save data.
-/// This is best for simple serializable data, not for complex object graphs.
+/// Atomic JSON file helper. Unity JsonUtility stays on the main thread while disk I/O runs on a worker.
 /// </summary>
 public static class JsonSaveFile
 {
-    /// <summary>
-    /// Save a serializable object into <see cref="Application.persistentDataPath"/>.
-    /// </summary>
-    public static bool Save<T>(string fileName, T data, string relativeFolder = null, bool prettyPrint = true)
+    public static bool Save<T>(
+        string fileName,
+        T data,
+        string relativeFolder = null,
+        bool prettyPrint = true)
     {
         try
         {
-            var path = GetPath(fileName, relativeFolder);
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            var tempPath = path + ".tmp";
-            File.WriteAllText(tempPath, JsonUtility.ToJson(data, prettyPrint));
-
-            if (File.Exists(path))
-            {
-                var backupPath = path + ".bak";
-                if (File.Exists(backupPath))
-                {
-                    File.Delete(backupPath);
-                }
-
-                File.Move(path, backupPath);
-                File.Move(tempPath, path);
-                File.Delete(backupPath);
-            }
-            else
-            {
-                File.Move(tempPath, path);
-            }
-
+            string json = JsonUtility.ToJson(data, prettyPrint);
+            WriteAtomic(GetPath(fileName, relativeFolder), json);
             return true;
         }
         catch (Exception exception)
         {
-            BaseLog.LogWarning($"[JsonSaveFile] Khong the luu '{fileName}': {exception.Message}");
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not save '{fileName}': {exception.Message}");
             return false;
         }
     }
 
-    public static async Cysharp.Threading.Tasks.UniTask<bool> SaveAsync<T>(string fileName, T data, string relativeFolder = null, bool prettyPrint = true)
+    public static async UniTask<bool> SaveAsync<T>(
+        string fileName,
+        T data,
+        string relativeFolder = null,
+        bool prettyPrint = true,
+        CancellationToken cancellationToken = default)
     {
-        bool result = false;
-        await Cysharp.Threading.Tasks.UniTask.RunOnThreadPool(() =>
+        cancellationToken.ThrowIfCancellationRequested();
+        string json = JsonUtility.ToJson(data, prettyPrint);
+        string path = GetPath(fileName, relativeFolder);
+
+        try
         {
-            result = Save(fileName, data, relativeFolder, prettyPrint);
-        });
-        return result;
+            await UniTask.RunOnThreadPool(
+                () =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    WriteAtomic(path, json);
+                },
+                cancellationToken: cancellationToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not save '{fileName}': {exception.Message}");
+            return false;
+        }
     }
 
-    public static async Cysharp.Threading.Tasks.UniTask<(bool success, T data)> TryLoadAsync<T>(string fileName, string relativeFolder = null)
-    {
-        bool success = false;
-        T data = default;
-        await Cysharp.Threading.Tasks.UniTask.RunOnThreadPool(() =>
-        {
-            success = TryLoad(fileName, out data, relativeFolder);
-        });
-        return (success, data);
-    }
-
-    /// <summary>
-    /// Try to load a serializable object from disk.
-    /// </summary>
-    public static bool TryLoad<T>(string fileName, out T data, string relativeFolder = null)
+    public static bool TryLoad<T>(
+        string fileName,
+        out T data,
+        string relativeFolder = null)
     {
         try
         {
-            var path = GetPath(fileName, relativeFolder);
-            if (!File.Exists(path))
+            string json = ReadWithBackup(GetPath(fileName, relativeFolder));
+            if (string.IsNullOrEmpty(json))
             {
                 data = default;
                 return false;
             }
 
-            var json = File.ReadAllText(path);
             data = JsonUtility.FromJson<T>(json);
             return true;
         }
         catch (Exception exception)
         {
-            BaseLog.LogWarning($"[JsonSaveFile] Khong the doc '{fileName}': {exception.Message}");
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not load '{fileName}': {exception.Message}");
             data = default;
             return false;
         }
     }
 
-    public static T LoadOrDefault<T>(string fileName, T defaultValue = default, string relativeFolder = null)
+    public static async UniTask<(bool success, T data)> TryLoadAsync<T>(
+        string fileName,
+        string relativeFolder = null,
+        CancellationToken cancellationToken = default)
+    {
+        string path = GetPath(fileName, relativeFolder);
+        string json;
+
+        try
+        {
+            json = await UniTask.RunOnThreadPool(
+                () =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return ReadWithBackup(path);
+                },
+                cancellationToken: cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not read '{fileName}': {exception.Message}");
+            return (false, default);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrEmpty(json))
+        {
+            return (false, default);
+        }
+
+        try
+        {
+            return (true, JsonUtility.FromJson<T>(json));
+        }
+        catch (Exception exception)
+        {
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not deserialize '{fileName}': {exception.Message}");
+            return (false, default);
+        }
+    }
+
+    public static T LoadOrDefault<T>(
+        string fileName,
+        T defaultValue = default,
+        string relativeFolder = null)
     {
         return TryLoad(fileName, out T data, relativeFolder) ? data : defaultValue;
     }
@@ -113,33 +154,85 @@ public static class JsonSaveFile
     {
         try
         {
-            var path = GetPath(fileName, relativeFolder);
-            if (!File.Exists(path))
+            string path = GetPath(fileName, relativeFolder);
+            bool deleted = false;
+            foreach (string candidate in new[] { path, path + ".bak", path + ".tmp" })
             {
-                return false;
+                if (!File.Exists(candidate)) continue;
+                File.Delete(candidate);
+                deleted = true;
             }
 
-            File.Delete(path);
-            return true;
+            return deleted;
         }
         catch (Exception exception)
         {
-            BaseLog.LogWarning($"[JsonSaveFile] Khong the xoa '{fileName}': {exception.Message}");
+            BaseLog.LogWarning(
+                $"[JsonSaveFile] Could not delete '{fileName}': {exception.Message}");
             return false;
         }
     }
 
     public static string GetPath(string fileName, string relativeFolder = null)
     {
-        var normalizedFileName = NormalizeFileName(fileName);
-        var rootPath = Application.persistentDataPath;
+        string normalizedFileName = NormalizeFileName(fileName);
+        string rootPath = Application.persistentDataPath;
 
         if (!string.IsNullOrWhiteSpace(relativeFolder))
         {
-            rootPath = Path.Combine(rootPath, relativeFolder);
+            string safeFolder = relativeFolder
+                .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+                .Trim(Path.DirectorySeparatorChar);
+            rootPath = Path.Combine(rootPath, safeFolder);
         }
 
         return Path.Combine(rootPath, normalizedFileName);
+    }
+
+    private static void WriteAtomic(string path, string json)
+    {
+        string directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        string tempPath = path + ".tmp";
+        string backupPath = path + ".bak";
+        File.WriteAllText(tempPath, json ?? string.Empty);
+
+        if (!File.Exists(path))
+        {
+            File.Move(tempPath, path);
+            return;
+        }
+
+        if (File.Exists(backupPath))
+        {
+            File.Delete(backupPath);
+        }
+
+        try
+        {
+            File.Replace(tempPath, path, backupPath);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            File.Copy(path, backupPath, overwrite: true);
+            File.Delete(path);
+            File.Move(tempPath, path);
+        }
+    }
+
+    private static string ReadWithBackup(string path)
+    {
+        if (File.Exists(path))
+        {
+            return File.ReadAllText(path);
+        }
+
+        string backupPath = path + ".bak";
+        return File.Exists(backupPath) ? File.ReadAllText(backupPath) : null;
     }
 
     private static string NormalizeFileName(string fileName)
@@ -149,9 +242,20 @@ public static class JsonSaveFile
             throw new ArgumentException("File name must not be empty.", nameof(fileName));
         }
 
-        var extension = Path.GetExtension(fileName);
-        return string.Equals(extension, BaseConstants.JsonFileExtension, StringComparison.OrdinalIgnoreCase)
-            ? fileName
-            : fileName + BaseConstants.JsonFileExtension;
+        string leafName = Path.GetFileName(fileName);
+        if (!string.Equals(leafName, fileName, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "File name must not contain directory traversal or path separators.",
+                nameof(fileName));
+        }
+
+        string extension = Path.GetExtension(leafName);
+        return string.Equals(
+                extension,
+                BaseConstants.JsonFileExtension,
+                StringComparison.OrdinalIgnoreCase)
+            ? leafName
+            : leafName + BaseConstants.JsonFileExtension;
     }
 }

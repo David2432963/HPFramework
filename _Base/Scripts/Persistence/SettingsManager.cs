@@ -1,14 +1,14 @@
 using System;
+using Base;
 using UnityEngine;
 using VContainer.Unity;
 using Base.Persistence;
 
 /// <summary>
-/// Settings manager service for common application preferences.
-/// Pure C# class managed by VContainer as ISettingsProvider.
-/// Caches settings in RAM to avoid registry read/write overhead and GC allocations.
+/// Single source of truth for mutable application preferences.
+/// Values are cached in memory and flushed on explicit Save or container disposal.
 /// </summary>
-public sealed class SettingsManager : ISettingsProvider, IInitializable, IDisposable
+public sealed class SettingsManager : ISettingsService, IInitializable, IDisposable
 {
     public event Action<string> SettingChanged;
 
@@ -18,36 +18,24 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
     private float musicVolume;
     private bool vibrationEnabled;
     private float sensitivity;
-
     private int targetFrameRate;
     private int qualityLevel;
+    private bool initialized;
+
+    public bool IsInitialized => initialized;
 
     public bool SoundEnabled
     {
         get => soundEnabled;
-        set
-        {
-            if (soundEnabled != value)
-            {
-                soundEnabled = value;
-                PlayerPrefSave.SetBool(nameof(SoundEnabled), value, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(SoundEnabled));
-            }
-        }
+        set => SetValue(ref soundEnabled, value, nameof(SoundEnabled),
+            v => PlayerPrefSave.SetBool(nameof(SoundEnabled), v, BaseConstants.SettingsSection));
     }
 
     public bool MusicEnabled
     {
         get => musicEnabled;
-        set
-        {
-            if (musicEnabled != value)
-            {
-                musicEnabled = value;
-                PlayerPrefSave.SetBool(nameof(MusicEnabled), value, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(MusicEnabled));
-            }
-        }
+        set => SetValue(ref musicEnabled, value, nameof(MusicEnabled),
+            v => PlayerPrefSave.SetBool(nameof(MusicEnabled), v, BaseConstants.SettingsSection));
     }
 
     public float SoundVolume
@@ -56,12 +44,8 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
         set
         {
             float clamped = Mathf.Clamp01(value);
-            if (!Mathf.Approximately(soundVolume, clamped))
-            {
-                soundVolume = clamped;
-                PlayerPrefSave.SetFloat(nameof(SoundVolume), clamped, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(SoundVolume));
-            }
+            SetValue(ref soundVolume, clamped, nameof(SoundVolume),
+                v => PlayerPrefSave.SetFloat(nameof(SoundVolume), v, BaseConstants.SettingsSection));
         }
     }
 
@@ -71,27 +55,16 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
         set
         {
             float clamped = Mathf.Clamp01(value);
-            if (!Mathf.Approximately(musicVolume, clamped))
-            {
-                musicVolume = clamped;
-                PlayerPrefSave.SetFloat(nameof(MusicVolume), clamped, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(MusicVolume));
-            }
+            SetValue(ref musicVolume, clamped, nameof(MusicVolume),
+                v => PlayerPrefSave.SetFloat(nameof(MusicVolume), v, BaseConstants.SettingsSection));
         }
     }
 
     public bool VibrationEnabled
     {
         get => vibrationEnabled;
-        set
-        {
-            if (vibrationEnabled != value)
-            {
-                vibrationEnabled = value;
-                PlayerPrefSave.SetBool(nameof(VibrationEnabled), value, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(VibrationEnabled));
-            }
-        }
+        set => SetValue(ref vibrationEnabled, value, nameof(VibrationEnabled),
+            v => PlayerPrefSave.SetBool(nameof(VibrationEnabled), v, BaseConstants.SettingsSection));
     }
 
     public float Sensitivity
@@ -99,12 +72,9 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
         get => sensitivity;
         set
         {
-            if (!Mathf.Approximately(sensitivity, value))
-            {
-                sensitivity = value;
-                PlayerPrefSave.SetFloat(nameof(Sensitivity), value, BaseConstants.SettingsSection);
-                SettingChanged?.Invoke(nameof(Sensitivity));
-            }
+            float clamped = Mathf.Max(0f, value);
+            SetValue(ref sensitivity, clamped, nameof(Sensitivity),
+                v => PlayerPrefSave.SetFloat(nameof(Sensitivity), v, BaseConstants.SettingsSection));
         }
     }
 
@@ -113,13 +83,14 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
         get => targetFrameRate;
         set
         {
-            if (targetFrameRate != value)
+            int normalized = value == 0 ? -1 : value;
+            if (!SetValue(ref targetFrameRate, normalized, nameof(TargetFrameRate),
+                    v => PlayerPrefSave.SetInt(nameof(TargetFrameRate), v, BaseConstants.SettingsSection)))
             {
-                targetFrameRate = value;
-                PlayerPrefSave.SetInt(nameof(TargetFrameRate), value, BaseConstants.SettingsSection);
-                Application.targetFrameRate = value;
-                SettingChanged?.Invoke(nameof(TargetFrameRate));
+                return;
             }
+
+            Application.targetFrameRate = normalized;
         }
     }
 
@@ -128,30 +99,52 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
         get => qualityLevel;
         set
         {
-            if (qualityLevel != value)
+            int maxLevel = Mathf.Max(0, QualitySettings.names.Length - 1);
+            int clamped = Mathf.Clamp(value, 0, maxLevel);
+            if (!SetValue(ref qualityLevel, clamped, nameof(QualityLevel),
+                    v => PlayerPrefSave.SetInt(nameof(QualityLevel), v, BaseConstants.SettingsSection)))
             {
-                qualityLevel = value;
-                PlayerPrefSave.SetInt(nameof(QualityLevel), value, BaseConstants.SettingsSection);
-                QualitySettings.SetQualityLevel(value, true);
-                SettingChanged?.Invoke(nameof(QualityLevel));
+                return;
             }
+
+            QualitySettings.SetQualityLevel(clamped, true);
         }
     }
 
     public void Initialize()
     {
-        soundEnabled = PlayerPrefSave.GetBool(nameof(SoundEnabled), true, BaseConstants.SettingsSection);
-        musicEnabled = PlayerPrefSave.GetBool(nameof(MusicEnabled), true, BaseConstants.SettingsSection);
-        soundVolume = PlayerPrefSave.GetFloat(nameof(SoundVolume), 1f, BaseConstants.SettingsSection);
-        musicVolume = PlayerPrefSave.GetFloat(nameof(MusicVolume), 1f, BaseConstants.SettingsSection);
-        vibrationEnabled = PlayerPrefSave.GetBool(nameof(VibrationEnabled), true, BaseConstants.SettingsSection);
-        sensitivity = PlayerPrefSave.GetFloat(nameof(Sensitivity), 1f, BaseConstants.SettingsSection);
+        if (initialized)
+        {
+            return;
+        }
 
-        targetFrameRate = PlayerPrefSave.GetInt(nameof(TargetFrameRate), 60, BaseConstants.SettingsSection);
-        qualityLevel = PlayerPrefSave.GetInt(nameof(QualityLevel), QualitySettings.GetQualityLevel(), BaseConstants.SettingsSection);
+        soundEnabled = PlayerPrefSave.GetBool(
+            nameof(SoundEnabled), true, BaseConstants.SettingsSection);
+        musicEnabled = PlayerPrefSave.GetBool(
+            nameof(MusicEnabled), true, BaseConstants.SettingsSection);
+        soundVolume = Mathf.Clamp01(PlayerPrefSave.GetFloat(
+            nameof(SoundVolume), 1f, BaseConstants.SettingsSection));
+        musicVolume = Mathf.Clamp01(PlayerPrefSave.GetFloat(
+            nameof(MusicVolume), 1f, BaseConstants.SettingsSection));
+        vibrationEnabled = PlayerPrefSave.GetBool(
+            nameof(VibrationEnabled), true, BaseConstants.SettingsSection);
+        sensitivity = Mathf.Max(0f, PlayerPrefSave.GetFloat(
+            nameof(Sensitivity), 1f, BaseConstants.SettingsSection));
+
+        targetFrameRate = PlayerPrefSave.GetInt(
+            nameof(TargetFrameRate), 60, BaseConstants.SettingsSection);
+        int maxQualityLevel = Mathf.Max(0, QualitySettings.names.Length - 1);
+        qualityLevel = Mathf.Clamp(
+            PlayerPrefSave.GetInt(
+                nameof(QualityLevel),
+                QualitySettings.GetQualityLevel(),
+                BaseConstants.SettingsSection),
+            0,
+            maxQualityLevel);
 
         Application.targetFrameRate = targetFrameRate;
         QualitySettings.SetQualityLevel(qualityLevel, true);
+        initialized = true;
     }
 
     public void Save()
@@ -162,5 +155,23 @@ public sealed class SettingsManager : ISettingsProvider, IInitializable, IDispos
     public void Dispose()
     {
         Save();
+        SettingChanged = null;
+    }
+
+    private bool SetValue<T>(
+        ref T field,
+        T value,
+        string settingName,
+        Action<T> persist)
+    {
+        if (Equals(field, value))
+        {
+            return false;
+        }
+
+        field = value;
+        persist?.Invoke(value);
+        SettingChanged?.Invoke(settingName);
+        return true;
     }
 }

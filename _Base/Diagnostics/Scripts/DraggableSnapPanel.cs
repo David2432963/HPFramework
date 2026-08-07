@@ -121,7 +121,7 @@ public sealed class DraggableSnapPanel : MonoBehaviour, IBeginDragHandler, IDrag
         float leftDistance = Mathf.Abs(panelMinX - parentMinX);
         float rightDistance = Mathf.Abs(parentMaxX - panelMaxX);
         float bottomDistance = Mathf.Abs(panelMinY - parentMinY);
-        float topDistance = Mathf.Abs(parentMaxY - parentMaxY);
+        float topDistance = Mathf.Abs(parentMaxY - panelMaxY);
 
         float width = panelMaxX - panelMinX;
         float height = panelMaxY - panelMinY;
