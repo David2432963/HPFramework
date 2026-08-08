@@ -1,0 +1,20 @@
+{
+  "name": "HP.Framework.Extensions",
+  "rootNamespace": "HP.Framework.Extensions",
+  "references": [
+    "HP.Framework.Core",
+    "Unity.TextMeshPro",
+    "Unity.UGUI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "HP.Framework.NewtonsoftJson.dll"
+  ],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

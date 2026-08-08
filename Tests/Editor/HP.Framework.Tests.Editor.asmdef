@@ -1,0 +1,44 @@
+﻿{
+    "name":  "HP.Framework.Tests.Editor",
+    "rootNamespace":  "HP.Framework.Tests.Editor",
+    "references":  [
+                       "HP.Framework.Core",
+                       "HP.Framework.Assets",
+                       "HP.Framework.Audio",
+                       "HP.Framework.Bootstrap",
+                       "HP.Framework.Editor",
+                       "HP.Framework.Haptics",
+                       "HP.Framework.Input",
+                       "HP.Framework.Persistence",
+                       "HP.Framework.Pooling",
+                       "HP.Framework.UI",
+                       "UniTask",
+                       "VContainer"
+                   ],
+    "includePlatforms":  [
+                             "Editor"
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  false,
+    "defineConstraints":  [
+                              "HP_FRAMEWORK_INPUT_SYSTEM"
+                          ],
+    "versionDefines":  [
+                           {
+                               "name": "com.unity.inputsystem",
+                               "expression": "[1.0.0,999.0.0)",
+                               "define": "HP_FRAMEWORK_INPUT_SYSTEM"
+                           }
+                       ],
+    "noEngineReferences":  false,
+    "optionalUnityReferences":  [
+                                    "TestAssemblies"
+                                ]
+}

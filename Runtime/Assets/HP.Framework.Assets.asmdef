@@ -1,0 +1,28 @@
+﻿{
+    "name":  "HP.Framework.Assets",
+    "rootNamespace":  "HP.Framework.Assets",
+    "references":  [
+                       "HP.Framework.Core",
+                       "UniTask",
+                       "VContainer"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

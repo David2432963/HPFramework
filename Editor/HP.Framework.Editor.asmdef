@@ -1,0 +1,35 @@
+﻿{
+    "name":  "HP.Framework.Editor",
+    "rootNamespace":  "HP.Framework.Editor",
+    "references":  [
+                       "HP.Framework.Core",
+                       "HP.Framework.Assets",
+                       "HP.Framework.Audio",
+                       "HP.Framework.Bootstrap",
+                       "HP.Framework.Haptics",
+                       "HP.Framework.Persistence",
+                       "HP.Framework.Pooling",
+                       "HP.Framework.UI",
+                       "VContainer",
+                       "Unity.UGUI"
+                   ],
+    "includePlatforms":  [
+                             "Editor"
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

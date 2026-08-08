@@ -1,0 +1,28 @@
+﻿{
+    "name":  "HP.Framework.Audio",
+    "rootNamespace":  "HP.Framework.Audio",
+    "references":  [
+                       "HP.Framework.Core",
+                       "HP.Framework.Persistence",
+                       "VContainer"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

@@ -1,0 +1,40 @@
+﻿# Unity/generated project artifacts (should never be part of this package repo)
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Build/
+Builds/
+MemoryCaptures/
+Recordings/
+
+# IDE
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Framework-generated host-project assets
+Generated/
+Generated.meta
+Settings/
+Settings.meta
+
+# Local tooling state
+.agent/
+
+# OS
+.DS_Store
+Thumbs.db

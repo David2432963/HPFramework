@@ -1,0 +1,35 @@
+﻿{
+    "name":  "HP.Framework.Bootstrap",
+    "rootNamespace":  "HP.Framework.Bootstrap",
+    "references":  [
+                       "HP.Framework.Core",
+                       "HP.Framework.Assets",
+                       "HP.Framework.Audio",
+                       "HP.Framework.Haptics",
+                       "HP.Framework.Persistence",
+                       "HP.Framework.Pooling",
+                       "HP.Framework.UI",
+                       "UniTask",
+                       "VContainer",
+                       "Unity.UGUI"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

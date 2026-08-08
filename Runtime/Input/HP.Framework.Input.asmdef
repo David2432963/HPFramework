@@ -1,0 +1,32 @@
+﻿{
+    "name":  "HP.Framework.Input",
+    "rootNamespace":  "HP.Framework.Input",
+    "references":  [
+                       "HP.Framework.Core",
+                       "Unity.InputSystem",
+                       "VContainer"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+                              "HP_FRAMEWORK_INPUT_SYSTEM"
+                          ],
+    "versionDefines":  [
+                           {
+                               "name": "com.unity.inputsystem",
+                               "expression": "[1.0.0,999.0.0)",
+                               "define": "HP_FRAMEWORK_INPUT_SYSTEM"
+                           }
+                       ],
+    "noEngineReferences":  false
+}

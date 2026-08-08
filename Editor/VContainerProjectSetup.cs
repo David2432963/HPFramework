@@ -1,0 +1,281 @@
+﻿#if UNITY_EDITOR
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using HP.Framework.Bootstrap;
+using UnityEditor;
+using UnityEngine;
+using VContainer.Unity;
+
+namespace HP.Framework.Editor
+{
+    /// <summary>
+    /// Project-level VContainer setup and validation. Keeps VContainer itself visible to game
+    /// code while removing the repetitive editor setup needed by every project.
+    /// </summary>
+    public static class VContainerProjectSetup
+    {
+        public static string SettingsPath => HPFrameworkProjectPaths.VContainerSettingsPath;
+
+        [MenuItem("Tools/HP Framework/VContainer/Setup Project Root", false, 10)]
+        public static void SetupProjectRoot()
+        {
+            RootLifetimeScope rootScope = FindBootstrapRootScope()
+                ?? BootstrapPrefabCreator.CreateOrRepairBootstrap(configureProjectRoot: false);
+            if (rootScope == null)
+            {
+                Debug.LogError(
+                    "[HP Framework/VContainer] Could not create or find a Bootstrap prefab containing RootLifetimeScope.");
+                return;
+            }
+
+            ConfigureProjectRoot(rootScope);
+        }
+
+        public static VContainerSettings ConfigureProjectRoot(RootLifetimeScope rootScope)
+        {
+            if (rootScope == null)
+            {
+                throw new ArgumentNullException(nameof(rootScope));
+            }
+
+            VContainerSettings settings = FindOrCreateSettings();
+            settings.RootLifetimeScope = rootScope;
+            // Diagnostics are intentionally opt-in because VContainer's collector has runtime cost.
+            settings.EnableDiagnostics = false;
+
+            List<UnityEngine.Object> preloadedAssets = PlayerSettings.GetPreloadedAssets()
+                .Where(asset => asset != null && !(asset is VContainerSettings))
+                .ToList();
+            preloadedAssets.Add(settings);
+            PlayerSettings.SetPreloadedAssets(preloadedAssets.ToArray());
+
+            EditorUtility.SetDirty(settings);
+            AssetDatabase.SaveAssets();
+            VContainerSettings.LoadInstanceFromPreloadAssets();
+
+            Debug.Log(
+                $"[HP Framework/VContainer] Project root configured: {AssetDatabase.GetAssetPath(rootScope)} " +
+                $"via {SettingsPath}.");
+            return settings;
+        }
+
+        [MenuItem("Tools/HP Framework/VContainer/Validate Project Setup", false, 11)]
+        public static void ValidateProjectSetupMenu()
+        {
+            ValidateProjectSetup(logSuccess: true);
+        }
+
+        public static bool ValidateProjectSetup(bool logSuccess)
+        {
+            bool valid = true;
+            VContainerSettings[] preloadedSettings = PlayerSettings.GetPreloadedAssets()
+                .OfType<VContainerSettings>()
+                .ToArray();
+
+            if (preloadedSettings.Length != 1)
+            {
+                valid = false;
+                Debug.LogError(
+                    $"[HP Framework/VContainer] Expected exactly one preloaded VContainerSettings asset, " +
+                    $"found {preloadedSettings.Length}. Run Tools/HP Framework/Setup.");
+            }
+
+            VContainerSettings settings = preloadedSettings.FirstOrDefault();
+            if (settings == null || settings.RootLifetimeScope == null)
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] VContainerSettings has no RootLifetimeScope prefab assigned.");
+            }
+            else if (!(settings.RootLifetimeScope is RootLifetimeScope))
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] Project root must derive from HP.Framework.Bootstrap.RootLifetimeScope.");
+            }
+
+            ValidateSceneRootDuplicates(settings);
+            ValidateFeatureParents();
+
+            if (valid && logSuccess)
+            {
+                Debug.Log(
+                    "[HP Framework/VContainer] Project setup is valid. Root scope and preload settings are configured.");
+            }
+
+            return valid;
+        }
+
+        [MenuItem("Tools/HP Framework/VContainer/Open Diagnostics", false, 30)]
+        public static void OpenDiagnostics()
+        {
+            EditorApplication.ExecuteMenuItem("Window/VContainer Diagnostics");
+        }
+
+        private static void ValidateSceneRootDuplicates(VContainerSettings settings)
+        {
+            if (settings == null || settings.RootLifetimeScope == null)
+            {
+                return;
+            }
+
+            RootLifetimeScope[] sceneRoots = Resources.FindObjectsOfTypeAll<RootLifetimeScope>()
+                .Where(scope => scope != null
+                    && !EditorUtility.IsPersistent(scope)
+                    && scope.gameObject.scene.IsValid()
+                    && scope.gameObject.scene.isLoaded)
+                .ToArray();
+
+            if (sceneRoots.Length > 0)
+            {
+                Debug.LogWarning(
+                    "[HP Framework/VContainer] A project root is already configured through VContainerSettings, " +
+                    "but one or more RootLifetimeScope objects also exist in loaded scenes. " +
+                    "Prefer scene scopes there to avoid accidentally creating a second application scope.");
+            }
+        }
+
+        private static void ValidateFeatureParents()
+        {
+            BaseFeatureLifetimeScope[] featureScopes = Resources
+                .FindObjectsOfTypeAll<BaseFeatureLifetimeScope>()
+                .Where(scope => scope != null
+                    && !EditorUtility.IsPersistent(scope)
+                    && scope.gameObject.scene.IsValid()
+                    && scope.gameObject.scene.isLoaded)
+                .ToArray();
+
+            foreach (BaseFeatureLifetimeScope featureScope in featureScopes)
+            {
+                if (HasExplicitOrHierarchyParent(featureScope))
+                {
+                    continue;
+                }
+
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] Feature scope '{featureScope.name}' has no explicit or hierarchy " +
+                    "LifetimeScope parent. It will fall back to the project root and may bypass scene-scoped services.",
+                    featureScope);
+            }
+        }
+
+        private static bool HasExplicitOrHierarchyParent(LifetimeScope scope)
+        {
+            if (scope.parentReference.Object != null
+                || !string.IsNullOrWhiteSpace(scope.parentReference.TypeName))
+            {
+                return true;
+            }
+
+            Transform current = scope.transform.parent;
+            while (current != null)
+            {
+                if (current.TryGetComponent(out LifetimeScope _))
+                {
+                    return true;
+                }
+
+                current = current.parent;
+            }
+
+            return false;
+        }
+
+        private static RootLifetimeScope FindBootstrapRootScope()
+        {
+            GameObject projectBootstrap = AssetDatabase.LoadAssetAtPath<GameObject>(
+                HPFrameworkProjectPaths.BootstrapPath);
+            RootLifetimeScope projectScope = projectBootstrap != null
+                ? projectBootstrap.GetComponent<RootLifetimeScope>()
+                : null;
+            if (projectScope != null)
+            {
+                return projectScope;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("Bootstrap t:Prefab");
+            RootLifetimeScope packageFallback = null;
+            RootLifetimeScope fallback = null;
+
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                RootLifetimeScope scope = prefab != null
+                    ? prefab.GetComponent<RootLifetimeScope>()
+                    : null;
+                if (scope == null)
+                {
+                    continue;
+                }
+
+                // A project-owned Bootstrap may derive from RootLifetimeScope and register
+                // game-specific services, so always prefer Assets over the package default.
+                if (path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                {
+                    return scope;
+                }
+
+                if (path.IndexOf("com.hp.framework", StringComparison.OrdinalIgnoreCase) >= 0
+                    || string.Equals(
+                        guid,
+                        HPFrameworkProjectPaths.BootstrapTemplateGuid,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    packageFallback ??= scope;
+                }
+
+                fallback ??= scope;
+            }
+
+            return packageFallback ?? fallback;
+        }
+
+        private static VContainerSettings FindOrCreateSettings()
+        {
+            VContainerSettings settings = PlayerSettings.GetPreloadedAssets()
+                .OfType<VContainerSettings>()
+                .FirstOrDefault();
+            if (settings != null)
+            {
+                return settings;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("t:VContainerSettings");
+            if (guids.Length > 0)
+            {
+                string existingPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                settings = AssetDatabase.LoadAssetAtPath<VContainerSettings>(existingPath);
+                if (settings != null)
+                {
+                    return settings;
+                }
+            }
+
+            EnsureFolder(HPFrameworkProjectPaths.SettingsFolder);
+            settings = ScriptableObject.CreateInstance<VContainerSettings>();
+            AssetDatabase.CreateAsset(settings, SettingsPath);
+            return settings;
+        }
+
+        private static void EnsureFolder(string path)
+        {
+            string[] segments = path.Replace('\\', '/').Split('/');
+            string current = segments[0];
+            for (int i = 1; i < segments.Length; i++)
+            {
+                string next = current + "/" + segments[i];
+                if (!AssetDatabase.IsValidFolder(next))
+                {
+                    AssetDatabase.CreateFolder(current, segments[i]);
+                }
+
+                current = next;
+            }
+        }
+    }
+}
+#endif
+
+

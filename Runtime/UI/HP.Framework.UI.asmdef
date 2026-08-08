@@ -1,0 +1,30 @@
+﻿{
+    "name":  "HP.Framework.UI",
+    "rootNamespace":  "HP.Framework.UI",
+    "references":  [
+                       "HP.Framework.Core",
+                       "HP.Framework.Audio",
+                       "HP.Framework.Pooling",
+                       "VContainer",
+                       "Unity.UGUI"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

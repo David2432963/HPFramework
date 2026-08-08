@@ -1,0 +1,44 @@
+{
+    "name":  "com.hp.framework",
+    "version":  "3.0.0",
+    "displayName":  "HP Framework",
+    "description":  "VContainer-first modular Unity game framework with scoped services, scene flow, UI, pooling, persistence, audio, input, haptics, graphics, diagnostics and reusable extensions.",
+    "unity":  "6000.0",
+    "author":  {
+                   "name":  "HP"
+               },
+    "dependencies":  {
+                         "com.unity.inputsystem":  "1.18.0",
+                         "com.unity.ugui":  "2.0.0"
+                     },
+    "samples":  [
+                    {
+                        "displayName":  "Basic Setup",
+                        "description":  "Minimal HP Framework application setup.",
+                        "path":  "Samples~/01 Basic Setup"
+                    },
+                    {
+                        "displayName":  "Gameplay Scope",
+                        "description":  "Root to gameplay scene-scope example.",
+                        "path":  "Samples~/02 Gameplay Scope"
+                    },
+                    {
+                        "displayName":  "Scoped UI And Pool",
+                        "description":  "Scene-owned UI and pooling example.",
+                        "path":  "Samples~/03 Scoped UI And Pool"
+                    },
+                    {
+                        "displayName":  "Safe Area",
+                        "description":  "Safe Area simulation demo and sample scene.",
+                        "path":  "Samples~/04 Safe Area"
+                    }
+                ],
+    "keywords":  [
+                     "framework",
+                     "architecture",
+                     "dependency-injection",
+                     "vcontainer",
+                     "unitask",
+                     "unity"
+                 ]
+}

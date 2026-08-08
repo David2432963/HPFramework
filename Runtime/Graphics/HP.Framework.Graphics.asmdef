@@ -1,0 +1,16 @@
+{
+  "name": "HP.Framework.Graphics",
+  "rootNamespace": "HP.Framework.Graphics",
+  "references": [
+    "Unity.UGUI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

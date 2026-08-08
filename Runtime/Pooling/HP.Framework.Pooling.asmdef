@@ -1,0 +1,27 @@
+﻿{
+    "name":  "HP.Framework.Pooling",
+    "rootNamespace":  "HP.Framework.Pooling",
+    "references":  [
+                       "HP.Framework.Core",
+                       "VContainer"
+                   ],
+    "includePlatforms":  [
+
+                         ],
+    "excludePlatforms":  [
+
+                         ],
+    "allowUnsafeCode":  false,
+    "overrideReferences":  false,
+    "precompiledReferences":  [
+
+                              ],
+    "autoReferenced":  true,
+    "defineConstraints":  [
+
+                          ],
+    "versionDefines":  [
+
+                       ],
+    "noEngineReferences":  false
+}

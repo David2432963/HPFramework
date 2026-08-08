@@ -1,0 +1,16 @@
+{
+  "name": "HP.Framework.Diagnostics",
+  "rootNamespace": "HP.Framework.Diagnostics",
+  "references": [
+    "Unity.UGUI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
