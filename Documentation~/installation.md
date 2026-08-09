@@ -1,4 +1,4 @@
-﻿# Installation
+# Installation
 
 ## Development mode
 
@@ -8,26 +8,67 @@ During active framework development, place the HP Framework repository directly 
 Assets/Plugins/HPFramework/
 ```
 
-This is the preferred development setup because all runtime and editor code is immediately editable, debuggable and visible in the IDE. The `.git` directory may remain inside `Assets/Plugins/HPFramework`; Unity ignores it while Git continues to treat the framework as its own repository.
+This is the preferred workflow while the framework is still evolving because runtime/editor source remains immediately editable, debuggable and visible in the consuming project. The framework may keep its own nested `.git` directory; Unity ignores it while Git continues to treat `Assets/Plugins/HPFramework` as an independent repository.
 
-Setup creates host-project Bootstrap/settings alongside the editable framework source:
+The expected source layout is:
+
+```text
+Assets/Plugins/HPFramework/
+├── Runtime/
+├── Editor/
+├── Tests/
+├── ThirdParty/
+├── Samples~/
+├── Documentation~/
+└── package.json
+```
+
+Setup creates host-project outputs beside the editable source:
 
 ```text
 Assets/Plugins/HPFramework/
 ├── Generated/
+│   └── Bootstrap.prefab
 └── Settings/
+    ├── VContainerSettings.asset
+    ├── DefaultAudioLibrary.asset
+    └── DefaultUICatalog.asset
 ```
 
-Those two folders are intentionally Git-ignored because their contents are generated or project-specific. The reusable Bootstrap template remains versioned at `Editor/Templates/Bootstrap.prefab`.
+`Generated/` and `Settings/` are intentionally excluded from the framework Git repository because they are generated/project-specific. The reusable Bootstrap source stays versioned at `Editor/Templates/Bootstrap.prefab`.
 
-HP Framework targets Unity 6. VContainer, UniTask and the private Json.NET build are bundled under `ThirdParty`.
+## Requirements
 
-UGUI is a required project dependency. The Input System integration is optional while the framework is consumed directly from `Assets/Plugins`: `HP.Framework.Input` uses a package version define and is excluded when `com.unity.inputsystem` is absent, while Bootstrap/Editor avoid a hard compile-time reference to that module. Future UPM installs still declare Input System in `package.json`.
+HP Framework targets Unity 6 (`6000.0` or newer).
 
-After placing the framework under `Assets/Plugins`, run `Tools > HP Framework > Setup`. Use **Setup / Repair Missing References** for normal repair; it preserves existing project UI configuration. Use **Reset Bootstrap To Framework Defaults** only for an intentional reset.
+Current dependency rules:
+
+- UGUI is required by the current UI/Graphics/Diagnostics stack.
+- VContainer and UniTask are bundled under `ThirdParty/`.
+- Json.NET 13.0.4 is bundled as the private `HP.Framework.NewtonsoftJson` assembly for internal framework extension use.
+- Input System is optional while the framework is consumed directly from `Assets/Plugins`. `HP.Framework.Input` uses a package version define and is excluded when `com.unity.inputsystem` is absent.
+- Editor/Bootstrap setup avoids a hard compile-time dependency on the optional Input assembly.
+
+`package.json` still declares Input System and UGUI for future UPM consumption. When the framework is placed under `Assets/Plugins`, Package Manager metadata does not automatically install those dependencies.
+
+## First project setup
+
+After placing the framework under `Assets/Plugins`, open:
+
+```text
+Tools > HP Framework > Setup
+```
+
+For normal setup or repair, use **Setup / Repair Missing References**. Repair is intentionally non-destructive: it fills missing references/objects while preserving existing manager ownership, camera settings, Canvas Scaler values, layout, catalogs, Input Actions and Toast assignments.
+
+Use **Reset Bootstrap To Framework Defaults** only when you intentionally want HP Framework to restore its canonical domain-owned Bootstrap hierarchy and stock defaults.
+
+After setup, run **Validate Project**.
 
 ## Future package distribution
 
-During active development, HP Framework is intended to live as editable source under `Assets/Plugins/HPFramework`. The repository still keeps `package.json`, `Runtime`, `Editor`, `Tests`, `Samples~` and `Documentation~` in a UPM-compatible layout so the same codebase can later be distributed through Git/local UPM without another architecture migration.
+The repository keeps a UPM-compatible root (`package.json`, `Runtime`, `Editor`, `Tests`, `Samples~`, `Documentation~`) so the same codebase can later be consumed through Git/local UPM without another structural migration.
 
-`package.json` is retained for future UPM distribution, but while the framework is under `Assets/Plugins`, Unity Package Manager does not automatically install the dependencies declared there. Input System integration is optional at compile time; the rest of the framework can compile without `com.unity.inputsystem`. UGUI remains a required Unity UI dependency.
+Editable `Assets/Plugins/HPFramework` consumption remains the intended workflow during active development.
+
+Before publishing or redistributing the framework publicly, choose explicit HP Framework license terms and verify the retained Safe Area helper's redistribution terms. See `THIRD PARTY NOTICES.md` for bundled dependency notices.

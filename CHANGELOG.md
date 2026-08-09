@@ -21,6 +21,8 @@ All notable changes to HP Framework are documented here.
 - Hardened UI catalog replacement/clear paths so registered views are destroyed instead of becoming orphaned.
 - Serialized JSON file operations per save path and reject persistence path traversal outside `Application.persistentDataPath`.
 - Reduced per-frame Graphics/Diagnostics/Safe Area work, added Resources same-key load deduplication, and added non-alloc physics query APIs.
+- Moved Ripple and normal scaled-time Bubbling Surface animation to shader-driven GPU clocks so effect time is not pushed through a MaterialPropertyBlock every frame; unscaled/edit-mode Bubbling playback retains a CPU fallback.
+- Added caller-owned/non-alloc frustum-plane APIs to `CameraUtils` for bulk visibility checks while keeping the existing convenience overloads.
 
 ### Restored / retained
 - Restored Graphics as `HP.Framework.Graphics`.
