@@ -157,6 +157,14 @@ Start with:
 - [Runtime performance](Documentation~/runtime-performance.md)
 - [Troubleshooting](Documentation~/troubleshooting.md)
 
+## AI agent rules and knowledge
+
+For projects that use AI coding agents, the companion repository below contains reusable agent rules and modular knowledge files for Unity project implementation:
+
+- [HPFramework-Agent-Rules](https://github.com/David2432963/HPFramework-Agent-Rules)
+
+Keep framework usage details in the HP Framework documentation above. The companion rules repository is intended to guide how an AI agent works inside a project and direct it to the relevant framework documentation when needed, rather than duplicating the framework documentation itself.
+
 ## Validation
 
 Run repository validation from the framework root:
