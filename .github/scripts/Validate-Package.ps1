@@ -192,6 +192,7 @@ $externalScriptGuids = [System.Collections.Generic.HashSet[string]]::new([String
     "0cd44c1031e13a943bb63640046fad76", # CanvasScaler
     "dc42784cf147c0c48a680349fa168899", # GraphicRaycaster
     "fe87c0e1cc204ed48ad3b37840f39efc", # Image
+    "76c392e42b5098c458856cdf6ecaaaa1", # EventSystem
     "5f7201a12d95ffc409449d95f23cf332", # Text
     "4e29b1a8efbd4b44bb3f3716e73f07ff"  # Button
 ) | ForEach-Object { [void]$externalScriptGuids.Add($_) }

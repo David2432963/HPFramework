@@ -15,6 +15,7 @@ All notable changes to HP Framework are documented here.
 - Hardened URP UI camera setup: UICamera is configured as Overlay and attached exactly once to the active Main Camera, which is configured as Base when URP is available.
 - Added scope-owned `IEventBus` / `EventBus` with `RegisterScopeEventBus()` while retaining the static `Observer` compatibility API.
 - Setup repair is now non-destructive by default; framework UI defaults are reapplied only through the explicit reset action.
+- Reorganized the default Bootstrap into domain-owned `Audio`, `UI`, `Input`, `Scene`, `Pools`, and `Haptics` roots; renamed UI mount points to `ScreenRoot`, `PopupRoot`, `NotificationRoot`, and `InputBlocker`; and made Reset migrate the legacy layout while normal Repair preserves existing ownership.
 - Made the Input System integration optional in editable `Assets/Plugins` mode by removing Bootstrap/Editor hard references and gating `HP.Framework.Input` with a package version define.
 - Optimized pooling by caching `IPoolable` components per instance instead of scanning hierarchies on every spawn/despawn.
 - Hardened UI catalog replacement/clear paths so registered views are destroyed instead of becoming orphaned.

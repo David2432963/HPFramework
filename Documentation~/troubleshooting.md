@@ -3,7 +3,7 @@
 ## Package compiles but project is not configured
 Run `Tools > HP Framework > Setup` and choose **Setup / Repair Missing References**.
 
-Normal Repair does not overwrite existing UICamera, Canvas Scaler, layout, catalogs, Input Actions or Toast assignments. If you intentionally want the stock framework values, use **Reset Bootstrap To Framework Defaults**.
+Normal Repair does not overwrite existing UICamera, Canvas Scaler, layout, manager ownership, catalogs, Input Actions or Toast assignments. If you intentionally want the stock framework values and the canonical domain-owned Bootstrap hierarchy (`Audio`, `UI`, `Input`, `Scene`, `Pools`, `Haptics`), use **Reset Bootstrap To Framework Defaults**.
 
 ## Input System is not installed
 In editable `Assets/Plugins` development mode the `HP.Framework.Input` assembly is optional and is excluded when `com.unity.inputsystem` is absent. Install the Input System package when the game needs `InputManager`; the rest of the framework does not need to fail compilation just because that optional module is missing. UGUI remains required by the framework UI stack.

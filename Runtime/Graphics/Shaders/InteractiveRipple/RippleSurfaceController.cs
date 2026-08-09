@@ -10,6 +10,8 @@ namespace HP.Framework.Graphics
         public const int MaxRipples = 8;
 
         private static readonly int EffectTimeId = Shader.PropertyToID("_EffectTime");
+        private static readonly int EffectTimeReferenceId = Shader.PropertyToID("_EffectTimeReference");
+        private static readonly int EffectTimeScaleId = Shader.PropertyToID("_EffectTimeScale");
         private static readonly int RippleCountId = Shader.PropertyToID("_RippleCount");
         private static readonly int RippleDataId = Shader.PropertyToID("_RippleData");
         private static readonly int RippleAxisScaleId = Shader.PropertyToID("_RippleAxisScale");
@@ -31,14 +33,17 @@ namespace HP.Framework.Graphics
 
         private MaterialPropertyBlock propertyBlock;
         private float effectTime;
+        private float effectTimeReference;
+        private float clockTimeScale = 1f;
         private int rippleCount;
         private int nextRippleIndex;
         private bool isPlaying;
+        private bool clockDirty = true;
         private bool rippleDataDirty = true;
         private float lastAxisScaleX = -1f;
         private float lastAxisScaleZ = -1f;
 
-        public float EffectTime => effectTime;
+        public float EffectTime => GetCurrentEffectTime();
         public bool IsPlaying => isPlaying;
         public int ActiveSlotCount => rippleCount;
 
@@ -53,6 +58,8 @@ namespace HP.Framework.Graphics
             InitializeReferences();
             propertyBlock = new MaterialPropertyBlock();
             isPlaying = playOnEnable;
+            clockTimeScale = timeScale;
+            effectTimeReference = Time.time;
         }
 
         private void OnEnable()
@@ -60,21 +67,27 @@ namespace HP.Framework.Graphics
             InitializeReferences();
             propertyBlock ??= new MaterialPropertyBlock();
             isPlaying = playOnEnable;
+            clockTimeScale = timeScale;
+            effectTimeReference = Time.time;
+            clockDirty = true;
             rippleDataDirty = true;
             lastAxisScaleX = -1f;
             lastAxisScaleZ = -1f;
             ApplyShaderProperties(force: true);
         }
 
-        private void Update()
+        private void LateUpdate()
         {
-            bool timeChanged = isPlaying && timeScale > 0f;
-            if (timeChanged)
-            {
-                effectTime += Time.deltaTime * timeScale;
-            }
+            // Effect time advances in the shader from Unity's _Time value. This lightweight
+            // check remains only so animated/non-uniform surface scale stays correct.
+            ApplyShaderProperties(force: false);
+        }
 
-            ApplyShaderProperties(force: timeChanged);
+        private void OnDisable()
+        {
+            CaptureCurrentEffectTime();
+            isPlaying = false;
+            clockDirty = true;
         }
 
         private void OnValidate()
@@ -83,6 +96,14 @@ namespace HP.Framework.Graphics
             defaultStrength = Mathf.Max(0f, defaultStrength);
             boundsTolerance = Mathf.Max(0f, boundsTolerance);
             InitializeReferences();
+
+            if (Application.isPlaying)
+            {
+                CaptureCurrentEffectTime();
+                clockTimeScale = timeScale;
+                effectTimeReference = Time.time;
+                clockDirty = true;
+            }
 
             if (isActiveAndEnabled)
             {
@@ -115,7 +136,7 @@ namespace HP.Framework.Graphics
             rippleData[nextRippleIndex] = new Vector4(
                 localPosition.x,
                 localPosition.z,
-                effectTime,
+                GetCurrentEffectTime(),
                 strength);
 
             nextRippleIndex = (nextRippleIndex + 1) % MaxRipples;
@@ -125,9 +146,48 @@ namespace HP.Framework.Graphics
             return true;
         }
 
-        public void Pause() => isPlaying = false;
-        public void Resume() => isPlaying = true;
-        public void SetTimeScale(float value) => timeScale = Mathf.Max(0f, value);
+        public void Pause()
+        {
+            if (!isPlaying)
+            {
+                return;
+            }
+
+            CaptureCurrentEffectTime();
+            isPlaying = false;
+            clockDirty = true;
+            ApplyShaderProperties(force: false);
+        }
+
+        public void Resume()
+        {
+            if (isPlaying)
+            {
+                return;
+            }
+
+            isPlaying = true;
+            clockTimeScale = timeScale;
+            effectTimeReference = Time.time;
+            clockDirty = true;
+            ApplyShaderProperties(force: false);
+        }
+
+        public void SetTimeScale(float value)
+        {
+            float clamped = Mathf.Max(0f, value);
+            if (Mathf.Approximately(timeScale, clamped))
+            {
+                return;
+            }
+
+            CaptureCurrentEffectTime();
+            timeScale = clamped;
+            clockTimeScale = clamped;
+            effectTimeReference = Time.time;
+            clockDirty = true;
+            ApplyShaderProperties(force: false);
+        }
 
         public void ClearRipples()
         {
@@ -141,6 +201,9 @@ namespace HP.Framework.Graphics
         public void RestartEffect()
         {
             effectTime = 0f;
+            effectTimeReference = Time.time;
+            clockTimeScale = timeScale;
+            clockDirty = true;
             ClearRipples();
         }
 
@@ -174,14 +237,23 @@ namespace HP.Framework.Graphics
             bool axisScaleChanged = !Mathf.Approximately(axisScaleX, lastAxisScaleX)
                 || !Mathf.Approximately(axisScaleZ, lastAxisScaleZ);
 
-            if (!force && !rippleDataDirty && !axisScaleChanged)
+            if (!force && !clockDirty && !rippleDataDirty && !axisScaleChanged)
             {
                 return;
             }
 
             // Preserve properties owned by other renderer features while updating only ours.
             targetRenderer.GetPropertyBlock(propertyBlock);
-            propertyBlock.SetFloat(EffectTimeId, effectTime);
+
+            if (force || clockDirty)
+            {
+                propertyBlock.SetFloat(EffectTimeId, effectTime);
+                propertyBlock.SetFloat(EffectTimeReferenceId, effectTimeReference);
+                propertyBlock.SetFloat(
+                    EffectTimeScaleId,
+                    isPlaying ? clockTimeScale : 0f);
+                clockDirty = false;
+            }
 
             if (rippleDataDirty)
             {
@@ -200,6 +272,27 @@ namespace HP.Framework.Graphics
             }
 
             targetRenderer.SetPropertyBlock(propertyBlock);
+        }
+
+        private float GetCurrentEffectTime()
+        {
+            if (!Application.isPlaying || !isPlaying)
+            {
+                return effectTime;
+            }
+
+            float elapsed = Mathf.Max(0f, Time.time - effectTimeReference);
+            return effectTime + elapsed * clockTimeScale;
+        }
+
+        private void CaptureCurrentEffectTime()
+        {
+            if (Application.isPlaying && isPlaying)
+            {
+                effectTime = GetCurrentEffectTime();
+            }
+
+            effectTimeReference = Application.isPlaying ? Time.time : 0f;
         }
 
         private void InitializeReferences()

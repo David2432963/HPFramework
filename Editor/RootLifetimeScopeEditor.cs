@@ -10,6 +10,7 @@ using HP.Framework.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace HP.Framework.Editor
@@ -19,6 +20,8 @@ namespace HP.Framework.Editor
     {
         private const string InputManagerAssemblyQualifiedName =
             "HP.Framework.Input.InputManager, HP.Framework.Input";
+        private const string InputSystemUIInputModuleAssemblyQualifiedName =
+            "UnityEngine.InputSystem.UI.InputSystemUIInputModule, Unity.InputSystem";
         public override void OnInspectorGUI()
         {
             RootLifetimeScope scope = (RootLifetimeScope)target;
@@ -38,7 +41,8 @@ namespace HP.Framework.Editor
             if (GUILayout.Button("Reset Hierarchy To Framework Defaults", GUILayout.Height(24f))
                 && EditorUtility.DisplayDialog(
                     "Reset HP Framework Bootstrap",
-                    "This reapplies HP Framework camera, canvas and layout defaults. Continue?",
+                    "This migrates framework-owned managers into the canonical domain hierarchy " +
+                    "and reapplies HP Framework camera, canvas and layout defaults. Continue?",
                     "Reset",
                     "Cancel"))
             {
@@ -95,19 +99,50 @@ namespace HP.Framework.Editor
             bool resetDefaults = false)
         {
             GameObject rootGo = scope.gameObject;
+            Transform bootstrapRoot = rootGo.transform;
             Undo.RegisterFullObjectHierarchyUndo(rootGo, "Auto Setup Bootstrap Hierarchy");
 
-            AudioManager audioManager = GetOrAddComponent<AudioManager>(rootGo);
-            UIManager uiManager = GetOrAddComponent<UIManager>(rootGo);
-            MonoBehaviour inputManager = GetOrAddOptionalMonoBehaviour(
-                rootGo,
-                InputManagerAssemblyQualifiedName);
-            GameSceneManager sceneManager = GetOrAddComponent<GameSceneManager>(rootGo);
-            PoolManager poolManager = GetOrAddComponent<PoolManager>(rootGo);
-            HapticManager hapticManager = GetOrAddComponent<HapticManager>(rootGo);
+            SerializedObject scopeObject = new SerializedObject(scope);
+            AudioManager audioManager = ResolveOrCreateManagedComponent<AudioManager>(
+                scopeObject.FindProperty("audioManager"),
+                bootstrapRoot,
+                "Audio",
+                resetDefaults);
+            UIManager uiManager = ResolveOrCreateManagedComponent<UIManager>(
+                scopeObject.FindProperty("uiManager"),
+                bootstrapRoot,
+                "UI",
+                resetDefaults);
+            MonoBehaviour inputManager = ResolveOrCreateOptionalManagedComponent(
+                scopeObject.FindProperty("inputManager"),
+                bootstrapRoot,
+                "Input",
+                InputManagerAssemblyQualifiedName,
+                resetDefaults);
+            GameSceneManager sceneManager = ResolveOrCreateManagedComponent<GameSceneManager>(
+                scopeObject.FindProperty("gameSceneManager"),
+                bootstrapRoot,
+                "Scene",
+                resetDefaults);
+            PoolManager poolManager = ResolveOrCreateManagedComponent<PoolManager>(
+                scopeObject.FindProperty("poolManager"),
+                bootstrapRoot,
+                "Pools",
+                resetDefaults);
+            HapticManager hapticManager = ResolveOrCreateManagedComponent<HapticManager>(
+                scopeObject.FindProperty("hapticManager"),
+                bootstrapRoot,
+                "Haptics",
+                resetDefaults);
 
-            bool cameraCreated = rootGo.transform.Find("UICamera") == null;
-            Transform cameraTransform = FindOrCreateChild(rootGo.transform, "UICamera");
+            Transform uiOwner = uiManager != null ? uiManager.transform : bootstrapRoot;
+            bool cameraCreated = uiOwner.Find("UICamera") == null
+                && bootstrapRoot.Find("UICamera") == null;
+            Transform cameraTransform = FindOrCreateOwnedChild(
+                uiOwner,
+                bootstrapRoot,
+                "UICamera",
+                resetDefaults);
             bool cameraComponentCreated = !cameraTransform.TryGetComponent(out Camera uiCamera);
             uiCamera ??= GetOrAddComponent<Camera>(cameraTransform.gameObject);
             if (resetDefaults || cameraCreated || cameraComponentCreated)
@@ -119,12 +154,21 @@ namespace HP.Framework.Editor
                 uiCamera.clearFlags = CameraClearFlags.SolidColor;
                 uiCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
                 uiCamera.cullingMask = 1 << 5;
+                uiCamera.allowHDR = false;
+                uiCamera.allowMSAA = false;
+                uiCamera.allowDynamicResolution = false;
+                uiCamera.useOcclusionCulling = false;
             }
 
             URPCameraStackUtility.ConfigureAsOverlay(uiCamera);
 
-            bool canvasCreated = rootGo.transform.Find("UICanvas") == null;
-            Transform canvasTransform = FindOrCreateChild(rootGo.transform, "UICanvas");
+            bool canvasCreated = uiOwner.Find("UICanvas") == null
+                && bootstrapRoot.Find("UICanvas") == null;
+            Transform canvasTransform = FindOrCreateOwnedChild(
+                uiOwner,
+                bootstrapRoot,
+                "UICanvas",
+                resetDefaults);
             bool canvasComponentCreated = !canvasTransform.TryGetComponent(out Canvas canvas);
             canvas ??= GetOrAddComponent<Canvas>(canvasTransform.gameObject);
             // Adding Canvas can replace a plain Transform with a RectTransform. Always reacquire
@@ -135,6 +179,9 @@ namespace HP.Framework.Editor
                 canvas.renderMode = RenderMode.ScreenSpaceCamera;
                 canvas.worldCamera = uiCamera;
                 canvas.planeDistance = 100f;
+                // Start lean. TextMeshProUGUI enables the extra channels it requires when text
+                // is actually present on this canvas.
+                canvas.additionalShaderChannels = AdditionalCanvasShaderChannels.None;
             }
             else if (canvas.worldCamera == null && canvas.renderMode == RenderMode.ScreenSpaceCamera)
             {
@@ -152,53 +199,74 @@ namespace HP.Framework.Editor
             }
             GetOrAddComponent<GraphicRaycaster>(canvasTransform.gameObject);
 
-            bool screenCreated = canvasTransform.Find("ScreenCanvas") == null;
-            bool popupCreated = canvasTransform.Find("PopupCanvas") == null;
-            bool notificationCreated = canvasTransform.Find("NotiCanvas") == null;
-            bool lockCreated = canvasTransform.Find("LockCanvas") == null;
-            RectTransform screenCanvas = FindOrCreateChildRect(canvasTransform, "ScreenCanvas");
-            RectTransform popupCanvas = FindOrCreateChildRect(canvasTransform, "PopupCanvas");
-            RectTransform notificationCanvas = FindOrCreateChildRect(canvasTransform, "NotiCanvas");
-            RectTransform lockCanvas = FindOrCreateChildRect(canvasTransform, "LockCanvas");
-            if (resetDefaults || screenCreated) SetFullStretch(screenCanvas);
-            if (resetDefaults || popupCreated) SetFullStretch(popupCanvas);
-            if (resetDefaults || notificationCreated) SetFullStretch(notificationCanvas);
-            if (resetDefaults || lockCreated) SetFullStretch(lockCanvas);
+            RectTransform screenRoot = FindOrCreateRenamedChildRect(
+                canvasTransform,
+                "ScreenRoot",
+                resetDefaults,
+                out bool screenCreated,
+                "ScreenCanvas");
+            RectTransform popupRoot = FindOrCreateRenamedChildRect(
+                canvasTransform,
+                "PopupRoot",
+                resetDefaults,
+                out bool popupCreated,
+                "PopupCanvas");
+            RectTransform notificationRoot = FindOrCreateRenamedChildRect(
+                canvasTransform,
+                "NotificationRoot",
+                resetDefaults,
+                out bool notificationCreated,
+                "NotiCanvas",
+                "NotificationCanvas");
+            RectTransform inputBlocker = FindOrCreateRenamedChildRect(
+                canvasTransform,
+                "InputBlocker",
+                resetDefaults,
+                out bool blockerCreated,
+                "LockCanvas");
+            if (resetDefaults || screenCreated) SetFullStretch(screenRoot);
+            if (resetDefaults || popupCreated) SetFullStretch(popupRoot);
+            if (resetDefaults || notificationCreated) SetFullStretch(notificationRoot);
+            if (resetDefaults || blockerCreated) SetFullStretch(inputBlocker);
 
-            GetOrAddComponent<CanvasGroup>(lockCanvas.gameObject);
-            bool lockImageCreated = !lockCanvas.TryGetComponent(out Image lockImage);
-            lockImage ??= GetOrAddComponent<Image>(lockCanvas.gameObject);
-            if (resetDefaults || lockCreated || lockImageCreated)
+            GetOrAddComponent<CanvasGroup>(inputBlocker.gameObject);
+            bool blockerImageCreated = !inputBlocker.TryGetComponent(out Image blockerImage);
+            blockerImage ??= GetOrAddComponent<Image>(inputBlocker.gameObject);
+            if (resetDefaults || blockerCreated || blockerImageCreated)
             {
-                lockImage.color = new Color(0f, 0f, 0f, 0f);
-                lockCanvas.gameObject.SetActive(false);
+                blockerImage.color = new Color(0f, 0f, 0f, 0f);
+                blockerImage.raycastTarget = true;
+                inputBlocker.gameObject.SetActive(false);
             }
 
-            Transform poolRoot = FindOrCreateChild(rootGo.transform, "PoolRoot");
+            ConfigureEventSystem(uiOwner, bootstrapRoot, resetDefaults);
 
-            SerializedObject scopeObject = new SerializedObject(scope);
+            SerializedObject poolObject = new SerializedObject(poolManager);
+            SerializedProperty poolRootProperty = poolObject.FindProperty("rootPoolParent");
+            Transform poolRoot = ResolvePoolRoot(
+                poolManager,
+                bootstrapRoot,
+                poolRootProperty.objectReferenceValue as Transform,
+                resetDefaults);
+            poolRootProperty.objectReferenceValue = poolRoot;
+            poolObject.ApplyModifiedProperties();
+
+            scopeObject.Update();
             scopeObject.FindProperty("audioManager").objectReferenceValue = audioManager;
             scopeObject.FindProperty("uiManager").objectReferenceValue = uiManager;
-            if (inputManager != null)
-            {
-                scopeObject.FindProperty("inputManager").objectReferenceValue = inputManager;
-            }
+            scopeObject.FindProperty("inputManager").objectReferenceValue = inputManager;
             scopeObject.FindProperty("gameSceneManager").objectReferenceValue = sceneManager;
             scopeObject.FindProperty("poolManager").objectReferenceValue = poolManager;
             scopeObject.FindProperty("hapticManager").objectReferenceValue = hapticManager;
             scopeObject.ApplyModifiedProperties();
 
             SerializedObject uiObject = new SerializedObject(uiManager);
-            uiObject.FindProperty("screenCanvas").objectReferenceValue = screenCanvas;
-            uiObject.FindProperty("popupCanvas").objectReferenceValue = popupCanvas;
-            uiObject.FindProperty("notiCanvas").objectReferenceValue = notificationCanvas;
-            uiObject.FindProperty("lockCanvas").objectReferenceValue = lockCanvas;
+            uiObject.FindProperty("screenRoot").objectReferenceValue = screenRoot;
+            uiObject.FindProperty("popupRoot").objectReferenceValue = popupRoot;
+            uiObject.FindProperty("notificationRoot").objectReferenceValue = notificationRoot;
+            uiObject.FindProperty("inputBlocker").objectReferenceValue = inputBlocker;
             uiObject.FindProperty("uiCamera").objectReferenceValue = uiCamera;
             uiObject.ApplyModifiedProperties();
-
-            SerializedObject poolObject = new SerializedObject(poolManager);
-            poolObject.FindProperty("rootPoolParent").objectReferenceValue = poolRoot;
-            poolObject.ApplyModifiedProperties();
 
             if (rootGo.scene.IsValid())
             {
@@ -211,14 +279,16 @@ namespace HP.Framework.Editor
 
         public static void AutoSetupScriptableObjects(RootLifetimeScope scope)
         {
-            AudioLibrarySO audioLibrary = FindOrCreateAsset<AudioLibrarySO>(
-                HPFrameworkProjectPaths.AudioLibraryPath);
-            UICatalogSO uiCatalog = FindOrCreateAsset<UICatalogSO>(
-                HPFrameworkProjectPaths.UICatalogPath);
-
             SerializedObject scopeObject = new SerializedObject(scope);
             SerializedProperty scopeAudioLibrary = scopeObject.FindProperty("audioLibrary");
             SerializedProperty scopeUiCatalog = scopeObject.FindProperty("uiCatalog");
+
+            AudioLibrarySO audioLibrary = FindOrCreateAsset(
+                scopeAudioLibrary.objectReferenceValue as AudioLibrarySO,
+                HPFrameworkProjectPaths.AudioLibraryPath);
+            UICatalogSO uiCatalog = FindOrCreateAsset(
+                scopeUiCatalog.objectReferenceValue as UICatalogSO,
+                HPFrameworkProjectPaths.UICatalogPath);
             if (audioLibrary != null && scopeAudioLibrary.objectReferenceValue == null)
             {
                 scopeAudioLibrary.objectReferenceValue = audioLibrary;
@@ -229,7 +299,9 @@ namespace HP.Framework.Editor
             }
             scopeObject.ApplyModifiedProperties();
 
-            AudioManager audioManager = scope.GetComponent<AudioManager>();
+            AudioManager audioManager = GetReferencedComponent<AudioManager>(
+                scope,
+                "audioManager");
             if (audioManager != null && audioLibrary != null)
             {
                 SerializedObject audioObject = new SerializedObject(audioManager);
@@ -241,7 +313,9 @@ namespace HP.Framework.Editor
                 }
             }
 
-            UIManager uiManager = scope.GetComponent<UIManager>();
+            UIManager uiManager = GetReferencedComponent<UIManager>(
+                scope,
+                "uiManager");
             if (uiManager != null && uiCatalog != null)
             {
                 SerializedObject uiObject = new SerializedObject(uiManager);
@@ -259,8 +333,9 @@ namespace HP.Framework.Editor
 
         public static void AutoSetupDefaultRuntimeAssets(RootLifetimeScope scope)
         {
-            MonoBehaviour inputManager = GetOptionalMonoBehaviour(
-                scope.gameObject,
+            MonoBehaviour inputManager = GetReferencedOptionalMonoBehaviour(
+                scope,
+                "inputManager",
                 InputManagerAssemblyQualifiedName);
             if (inputManager != null)
             {
@@ -284,7 +359,9 @@ namespace HP.Framework.Editor
                 }
             }
 
-            UIManager uiManager = scope.GetComponent<UIManager>();
+            UIManager uiManager = GetReferencedComponent<UIManager>(
+                scope,
+                "uiManager");
             if (uiManager != null)
             {
                 GameObject toastPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
@@ -348,8 +425,100 @@ namespace HP.Framework.Editor
             return component;
         }
 
-        private static MonoBehaviour GetOrAddOptionalMonoBehaviour(
-            GameObject gameObject,
+        private static T ResolveOrCreateManagedComponent<T>(
+            SerializedProperty referenceProperty,
+            Transform bootstrapRoot,
+            string ownerName,
+            bool resetDefaults)
+            where T : Component
+        {
+            T referenced = referenceProperty.objectReferenceValue as T;
+            if (!resetDefaults)
+            {
+                if (referenced != null)
+                {
+                    return referenced;
+                }
+
+                T existing = bootstrapRoot.GetComponentInChildren<T>(true);
+                if (existing != null)
+                {
+                    return existing;
+                }
+            }
+
+            T source = referenced ?? bootstrapRoot.GetComponentInChildren<T>(true);
+            Transform owner = FindOrCreateChild(bootstrapRoot, ownerName);
+            T canonical = GetOrAddComponent<T>(owner.gameObject);
+            if (resetDefaults && source != null && source != canonical)
+            {
+                EditorUtility.CopySerialized(source, canonical);
+                Undo.DestroyObjectImmediate(source);
+            }
+
+            return canonical;
+        }
+
+        private static MonoBehaviour ResolveOrCreateOptionalManagedComponent(
+            SerializedProperty referenceProperty,
+            Transform bootstrapRoot,
+            string ownerName,
+            string assemblyQualifiedTypeName,
+            bool resetDefaults)
+        {
+            Type type = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
+            if (type == null || !typeof(MonoBehaviour).IsAssignableFrom(type))
+            {
+                return null;
+            }
+
+            MonoBehaviour referenced = referenceProperty.objectReferenceValue as MonoBehaviour;
+            if (referenced != null && !type.IsInstanceOfType(referenced))
+            {
+                referenced = null;
+            }
+
+            if (!resetDefaults)
+            {
+                if (referenced != null)
+                {
+                    return referenced;
+                }
+
+                MonoBehaviour existing = bootstrapRoot.GetComponentInChildren(type, true) as MonoBehaviour;
+                if (existing != null)
+                {
+                    return existing;
+                }
+            }
+
+            MonoBehaviour source = referenced
+                ?? bootstrapRoot.GetComponentInChildren(type, true) as MonoBehaviour;
+            Transform owner = FindOrCreateChild(bootstrapRoot, ownerName);
+            MonoBehaviour canonical = owner.GetComponent(type) as MonoBehaviour
+                ?? Undo.AddComponent(owner.gameObject, type) as MonoBehaviour;
+            if (resetDefaults && source != null && source != canonical)
+            {
+                EditorUtility.CopySerialized(source, canonical);
+                Undo.DestroyObjectImmediate(source);
+            }
+
+            return canonical;
+        }
+
+        private static T GetReferencedComponent<T>(RootLifetimeScope scope, string propertyName)
+            where T : Component
+        {
+            SerializedObject scopeObject = new SerializedObject(scope);
+            T referenced = scopeObject.FindProperty(propertyName)?.objectReferenceValue as T;
+            return referenced != null
+                ? referenced
+                : scope.GetComponentInChildren<T>(true);
+        }
+
+        private static MonoBehaviour GetReferencedOptionalMonoBehaviour(
+            RootLifetimeScope scope,
+            string propertyName,
             string assemblyQualifiedTypeName)
         {
             Type type = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
@@ -358,18 +527,173 @@ namespace HP.Framework.Editor
                 return null;
             }
 
-            return gameObject.GetComponent(type) as MonoBehaviour
-                ?? Undo.AddComponent(gameObject, type) as MonoBehaviour;
+            SerializedObject scopeObject = new SerializedObject(scope);
+            MonoBehaviour referenced =
+                scopeObject.FindProperty(propertyName)?.objectReferenceValue as MonoBehaviour;
+            if (referenced != null && type.IsInstanceOfType(referenced))
+            {
+                return referenced;
+            }
+
+            return scope.GetComponentInChildren(type, true) as MonoBehaviour;
         }
 
-        private static MonoBehaviour GetOptionalMonoBehaviour(
-            GameObject gameObject,
-            string assemblyQualifiedTypeName)
+        private static Transform FindOrCreateOwnedChild(
+            Transform owner,
+            Transform legacyParent,
+            string childName,
+            bool migrateToOwner)
         {
-            Type type = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
-            return type != null && typeof(MonoBehaviour).IsAssignableFrom(type)
-                ? gameObject.GetComponent(type) as MonoBehaviour
-                : null;
+            Transform child = owner.Find(childName);
+            if (child != null)
+            {
+                return child;
+            }
+
+            if (owner != legacyParent)
+            {
+                child = legacyParent.Find(childName);
+                if (child != null)
+                {
+                    if (migrateToOwner)
+                    {
+                        Undo.SetTransformParent(child, owner, $"Move {childName} To {owner.name}");
+                    }
+                    return child;
+                }
+            }
+
+            return FindOrCreateChild(owner, childName);
+        }
+
+        private static RectTransform FindOrCreateRenamedChildRect(
+            Transform parent,
+            string canonicalName,
+            bool renameLegacy,
+            out bool created,
+            params string[] legacyNames)
+        {
+            Transform child = parent.Find(canonicalName);
+            if (child != null)
+            {
+                RectTransform existingRect = child as RectTransform;
+                if (existingRect != null)
+                {
+                    created = false;
+                    return existingRect;
+                }
+
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] '{canonicalName}' exists but is not a RectTransform. " +
+                    "A canonical UI root will be created instead.",
+                    child);
+            }
+
+            for (int i = 0; i < legacyNames.Length; i++)
+            {
+                child = parent.Find(legacyNames[i]);
+                if (child == null)
+                {
+                    continue;
+                }
+
+                RectTransform legacyRect = child as RectTransform;
+                if (legacyRect == null)
+                {
+                    Debug.LogWarning(
+                        $"[HP Framework/VContainer] Legacy UI root '{legacyNames[i]}' is not a RectTransform " +
+                        "and cannot be migrated automatically.",
+                        child);
+                    continue;
+                }
+
+                created = false;
+                if (renameLegacy)
+                {
+                    Undo.RecordObject(child.gameObject, $"Rename {legacyNames[i]} To {canonicalName}");
+                    child.gameObject.name = canonicalName;
+                }
+                return legacyRect;
+            }
+
+            created = true;
+            return FindOrCreateUniqueChildRect(parent, canonicalName);
+        }
+
+        private static void ConfigureEventSystem(
+            Transform uiOwner,
+            Transform bootstrapRoot,
+            bool resetDefaults)
+        {
+            Transform eventSystemTransform = FindOrCreateOwnedChild(
+                uiOwner,
+                bootstrapRoot,
+                "EventSystem",
+                resetDefaults);
+            EventSystem eventSystem = GetOrAddComponent<EventSystem>(eventSystemTransform.gameObject);
+            BaseInputModule[] existingModules = eventSystem.GetComponents<BaseInputModule>();
+            if (!resetDefaults && existingModules.Length > 0)
+            {
+                return;
+            }
+
+            Type inputSystemModuleType = Type.GetType(
+                InputSystemUIInputModuleAssemblyQualifiedName,
+                throwOnError: false);
+            Type preferredModuleType = inputSystemModuleType != null
+                && typeof(BaseInputModule).IsAssignableFrom(inputSystemModuleType)
+                ? inputSystemModuleType
+                : typeof(StandaloneInputModule);
+
+            if (resetDefaults)
+            {
+                for (int i = 0; i < existingModules.Length; i++)
+                {
+                    BaseInputModule module = existingModules[i];
+                    if (module != null && module.GetType() != preferredModuleType)
+                    {
+                        Undo.DestroyObjectImmediate(module);
+                    }
+                }
+            }
+
+            if (eventSystem.GetComponent(preferredModuleType) == null)
+            {
+                Undo.AddComponent(eventSystem.gameObject, preferredModuleType);
+            }
+        }
+
+        private static Transform ResolvePoolRoot(
+            PoolManager poolManager,
+            Transform bootstrapRoot,
+            Transform currentPoolRoot,
+            bool resetDefaults)
+        {
+            if (!resetDefaults && currentPoolRoot != null)
+            {
+                return currentPoolRoot;
+            }
+
+            if (!resetDefaults)
+            {
+                Transform legacyRoot = bootstrapRoot.Find("PoolRoot");
+                return legacyRoot != null ? legacyRoot : poolManager.transform;
+            }
+
+            Transform oldPoolRoot = bootstrapRoot.Find("PoolRoot");
+            if (oldPoolRoot != null && oldPoolRoot != poolManager.transform)
+            {
+                while (oldPoolRoot.childCount > 0)
+                {
+                    Undo.SetTransformParent(
+                        oldPoolRoot.GetChild(0),
+                        poolManager.transform,
+                        "Migrate Pool Root Child");
+                }
+                Undo.DestroyObjectImmediate(oldPoolRoot.gameObject);
+            }
+
+            return poolManager.transform;
         }
 
         private static Transform FindOrCreateChild(Transform parent, string childName)
@@ -392,13 +716,32 @@ namespace HP.Framework.Editor
             Transform child = parent.Find(childName);
             if (child == null)
             {
-                GameObject childObject = new GameObject(childName, typeof(RectTransform));
-                Undo.RegisterCreatedObjectUndo(childObject, "Create Bootstrap UI Child");
-                child = childObject.transform;
-                child.SetParent(parent, false);
+                return FindOrCreateUniqueChildRect(parent, childName);
             }
 
-            return child as RectTransform;
+            RectTransform rect = child as RectTransform;
+            if (rect != null)
+            {
+                return rect;
+            }
+
+            return FindOrCreateUniqueChildRect(parent, childName);
+        }
+
+        private static RectTransform FindOrCreateUniqueChildRect(Transform parent, string childName)
+        {
+            string resolvedName = childName;
+            int suffix = 1;
+            while (parent.Find(resolvedName) != null)
+            {
+                resolvedName = $"{childName}_{suffix++}";
+            }
+
+            GameObject childObject = new GameObject(resolvedName, typeof(RectTransform));
+            Undo.RegisterCreatedObjectUndo(childObject, "Create Bootstrap UI Child");
+            RectTransform rect = childObject.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            return rect;
         }
 
         private static void SetFullStretch(RectTransform rectTransform)
@@ -409,13 +752,36 @@ namespace HP.Framework.Editor
             rectTransform.sizeDelta = Vector2.zero;
         }
 
-        private static T FindOrCreateAsset<T>(string defaultPath) where T : ScriptableObject
+        private static T FindOrCreateAsset<T>(T currentAsset, string defaultPath)
+            where T : ScriptableObject
         {
-            string[] guids = AssetDatabase.FindAssets($"t:{typeof(T).Name}");
-            if (guids.Length > 0)
+            if (currentAsset != null)
             {
-                string existingPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                return AssetDatabase.LoadAssetAtPath<T>(existingPath);
+                return currentAsset;
+            }
+
+            T canonicalAsset = AssetDatabase.LoadAssetAtPath<T>(defaultPath);
+            if (canonicalAsset != null)
+            {
+                return canonicalAsset;
+            }
+
+            string[] guids = AssetDatabase.FindAssets($"t:{typeof(T).Name}");
+            if (guids.Length == 1)
+            {
+                string onlyPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                T onlyAsset = AssetDatabase.LoadAssetAtPath<T>(onlyPath);
+                if (onlyAsset != null)
+                {
+                    return onlyAsset;
+                }
+            }
+            else if (guids.Length > 1)
+            {
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] Found multiple {typeof(T).Name} assets. " +
+                    $"Repair will create/use the deterministic framework asset at '{defaultPath}' " +
+                    "instead of selecting an arbitrary project asset.");
             }
 
             string directory = Path.GetDirectoryName(defaultPath)?.Replace('\\', '/');

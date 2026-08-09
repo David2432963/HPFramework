@@ -34,6 +34,8 @@ namespace HP.Framework.Graphics
         private static readonly int SurfaceSizeId = Shader.PropertyToID("_SurfaceSize");
         private static readonly int NormalSampleDistanceId = Shader.PropertyToID("_NormalSampleDistance");
         private static readonly int EffectTimeId = Shader.PropertyToID("_EffectTime");
+        private static readonly int EffectTimeReferenceId = Shader.PropertyToID("_EffectTimeReference");
+        private static readonly int EffectTimeScaleId = Shader.PropertyToID("_EffectTimeScale");
 
         [Header("Surface Colors")]
         [SerializeField] private Color baseColorLow = new Color(0.12f, 0.02f, 0.12f, 1f);
@@ -79,6 +81,13 @@ namespace HP.Framework.Graphics
         private Renderer cachedRenderer;
         private MaterialPropertyBlock propertyBlock;
         private float effectTime;
+        private float effectTimeReference;
+        private float clockTimeScale = 1f;
+        private bool gpuClockActive;
+        private bool clockRunning;
+
+        public float EffectTime => GetCurrentEffectTime();
+        public bool IsAnimationPlaying => clockRunning;
 
 #if UNITY_EDITOR
         private double lastEditorTime;
@@ -98,6 +107,11 @@ namespace HP.Framework.Graphics
                 effectTime = 0f;
             }
 
+            gpuClockActive = Application.isPlaying && !useUnscaledTime;
+            clockRunning = animationEnabled;
+            clockTimeScale = animationTimeScale;
+            effectTimeReference = gpuClockActive ? Time.time : 0f;
+
 #if UNITY_EDITOR
             lastEditorTime = EditorApplication.timeSinceStartup;
 #endif
@@ -107,13 +121,30 @@ namespace HP.Framework.Graphics
 
         private void Update()
         {
-            float deltaTime = GetDeltaTime();
-
-            if (animationEnabled && deltaTime > 0f)
+            // Normal runtime playback advances from shader _Time and does not touch the
+            // renderer every frame. Unscaled-time playback and edit-mode preview use the
+            // CPU fallback because Unity does not expose an equivalent unscaled shader clock.
+            if (!clockRunning || gpuClockActive)
             {
-                effectTime += deltaTime * animationTimeScale;
-                ApplyTimeOnly();
+                return;
             }
+
+            float deltaTime = GetCpuDrivenDeltaTime();
+            if (deltaTime <= 0f)
+            {
+                return;
+            }
+
+            effectTime += deltaTime * clockTimeScale;
+            ApplyClockOnly();
+        }
+
+        private void OnDisable()
+        {
+            CaptureCurrentEffectTime();
+            gpuClockActive = false;
+            clockRunning = false;
+            ApplyClockOnly();
         }
 
         private void Initialize()
@@ -126,11 +157,11 @@ namespace HP.Framework.Graphics
             propertyBlock ??= new MaterialPropertyBlock();
         }
 
-        private float GetDeltaTime()
+        private float GetCpuDrivenDeltaTime()
         {
             if (Application.isPlaying)
             {
-                return useUnscaledTime ? Time.unscaledDeltaTime : Time.deltaTime;
+                return useUnscaledTime ? Time.unscaledDeltaTime : 0f;
             }
 
 #if UNITY_EDITOR
@@ -193,24 +224,115 @@ namespace HP.Framework.Graphics
 
             Vector2 surfaceSize = GetSurfaceSize();
             propertyBlock.SetVector(SurfaceSizeId, new Vector4(surfaceSize.x, surfaceSize.y, 0f, 0f));
-            propertyBlock.SetFloat(EffectTimeId, effectTime);
+            WriteClockProperties();
 
             cachedRenderer.SetPropertyBlock(propertyBlock);
         }
 
-        private void ApplyTimeOnly()
+        private void ApplyClockOnly()
         {
             if (cachedRenderer == null || propertyBlock == null) return;
 
-            propertyBlock.SetFloat(EffectTimeId, effectTime);
+            // Preserve property-block values written by other renderer features.
+            cachedRenderer.GetPropertyBlock(propertyBlock);
+            WriteClockProperties();
             cachedRenderer.SetPropertyBlock(propertyBlock);
         }
 
-        public void SetAnimationEnabled(bool enabled) => animationEnabled = enabled;
-        public void PauseAnimation() => animationEnabled = false;
-        public void ResumeAnimation() => animationEnabled = true;
-        public void RestartAnimation() { effectTime = 0f; ApplyTimeOnly(); }
-        public void SetAnimationTimeScale(float newTimeScale) => animationTimeScale = Mathf.Max(0f, newTimeScale);
+        private void WriteClockProperties()
+        {
+            propertyBlock.SetFloat(EffectTimeId, effectTime);
+            propertyBlock.SetFloat(EffectTimeReferenceId, gpuClockActive ? effectTimeReference : 0f);
+            propertyBlock.SetFloat(
+                EffectTimeScaleId,
+                gpuClockActive && clockRunning ? clockTimeScale : 0f);
+        }
+
+        private float GetCurrentEffectTime()
+        {
+            if (!gpuClockActive || !clockRunning)
+            {
+                return effectTime;
+            }
+
+            float elapsed = Mathf.Max(0f, Time.time - effectTimeReference);
+            return effectTime + elapsed * clockTimeScale;
+        }
+
+        private void CaptureCurrentEffectTime()
+        {
+            if (gpuClockActive && clockRunning)
+            {
+                effectTime = GetCurrentEffectTime();
+            }
+
+            effectTimeReference = Application.isPlaying ? Time.time : 0f;
+        }
+
+        public void SetAnimationEnabled(bool enabled)
+        {
+            if (enabled)
+            {
+                ResumeAnimation();
+            }
+            else
+            {
+                PauseAnimation();
+            }
+        }
+
+        public void PauseAnimation()
+        {
+            animationEnabled = false;
+            if (!clockRunning)
+            {
+                return;
+            }
+
+            CaptureCurrentEffectTime();
+            clockRunning = false;
+            ApplyClockOnly();
+        }
+
+        public void ResumeAnimation()
+        {
+            animationEnabled = true;
+            if (clockRunning)
+            {
+                return;
+            }
+
+            gpuClockActive = Application.isPlaying && !useUnscaledTime;
+            clockRunning = true;
+            clockTimeScale = animationTimeScale;
+            effectTimeReference = gpuClockActive ? Time.time : 0f;
+#if UNITY_EDITOR
+            lastEditorTime = EditorApplication.timeSinceStartup;
+#endif
+            ApplyClockOnly();
+        }
+
+        public void RestartAnimation()
+        {
+            effectTime = 0f;
+            effectTimeReference = gpuClockActive ? Time.time : 0f;
+            ApplyClockOnly();
+        }
+
+        public void SetAnimationTimeScale(float newTimeScale)
+        {
+            float clamped = Mathf.Max(0f, newTimeScale);
+            if (Mathf.Approximately(animationTimeScale, clamped))
+            {
+                return;
+            }
+
+            CaptureCurrentEffectTime();
+            animationTimeScale = clamped;
+            clockTimeScale = clamped;
+            effectTimeReference = gpuClockActive ? Time.time : 0f;
+            ApplyClockOnly();
+        }
         public void SetDisplacement(float newDisplacement) { displacement = Mathf.Max(0f, newDisplacement); ApplyAllProperties(); }
         public void SetBubbleEmission(float newEmission) { bubbleEmission = Mathf.Max(0f, newEmission); ApplyAllProperties(); }
         public void SetBubbleChance(float newChance) { bubbleChance = Mathf.Clamp01(newChance); ApplyAllProperties(); }
@@ -243,6 +365,16 @@ namespace HP.Framework.Graphics
             manualSurfaceSize.y = Mathf.Max(0.001f, manualSurfaceSize.y);
 
             Initialize();
+
+            // Capture using the previous runtime clock state before applying inspector changes.
+            CaptureCurrentEffectTime();
+            gpuClockActive = Application.isPlaying && !useUnscaledTime;
+            clockRunning = animationEnabled;
+            clockTimeScale = animationTimeScale;
+            effectTimeReference = gpuClockActive ? Time.time : 0f;
+#if UNITY_EDITOR
+            lastEditorTime = EditorApplication.timeSinceStartup;
+#endif
             ApplyAllProperties();
         }
 #endif

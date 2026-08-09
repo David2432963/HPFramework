@@ -29,7 +29,9 @@ Shader "Base/BubblingSurfaceURP"
 
         _SurfaceSize("Surface Size", Vector) = (10, 10, 0, 0)
         _NormalSampleDistance("Normal Sample Distance", Range(0.001, 0.1)) = 0.01
-        _EffectTime("Effect Time", Float) = 0
+        [HideInInspector] _EffectTime("Effect Time", Float) = 0
+        [HideInInspector] _EffectTimeReference("Effect Time Reference", Float) = 0
+        [HideInInspector] _EffectTimeScale("Effect Time Scale", Float) = 0
     }
 
     SubShader
@@ -114,7 +116,15 @@ Shader "Base/BubblingSurfaceURP"
                 float4 _SurfaceSize;
                 float _NormalSampleDistance;
                 float _EffectTime;
+                float _EffectTimeReference;
+                float _EffectTimeScale;
             CBUFFER_END
+
+            float GetCurrentEffectTime()
+            {
+                float elapsed = max(_Time.y - _EffectTimeReference, 0.0);
+                return _EffectTime + elapsed * _EffectTimeScale;
+            }
 
             float Hash21(float2 p)
             {
@@ -266,6 +276,7 @@ Shader "Base/BubblingSurfaceURP"
             Varyings Vert(Attributes input)
             {
                 Varyings output;
+                float effectTime = GetCurrentEffectTime();
 
                 float sampleDistance = max(
                     _NormalSampleDistance,
@@ -274,17 +285,17 @@ Shader "Base/BubblingSurfaceURP"
 
                 float currentHeight = GetSurfaceHeight(
                     input.uv,
-                    _EffectTime
+                    effectTime
                 );
 
                 float heightU = GetSurfaceHeight(
                     input.uv + float2(sampleDistance, 0.0),
-                    _EffectTime
+                    effectTime
                 );
 
                 float heightV = GetSurfaceHeight(
                     input.uv + float2(0.0, sampleDistance),
-                    _EffectTime
+                    effectTime
                 );
 
                 float3 normalOS = normalize(input.normalOS);
@@ -343,10 +354,11 @@ Shader "Base/BubblingSurfaceURP"
             half4 Frag(Varyings input) : SV_Target
             {
                 half3 normalWS = normalize(input.normalWS);
+                float effectTime = GetCurrentEffectTime();
 
                 float surfaceSignal = GetSurfaceSignal(
                     input.uv,
-                    _EffectTime
+                    effectTime
                 );
 
                 float colorBlend = smoothstep(
@@ -363,7 +375,7 @@ Shader "Base/BubblingSurfaceURP"
 
                 float bubbleMask = GetBubbleMask(
                     input.uv,
-                    _EffectTime
+                    effectTime
                 );
 
                 float4 shadowCoord = TransformWorldToShadowCoord(

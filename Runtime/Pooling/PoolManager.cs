@@ -32,12 +32,9 @@
                 return;
             }
 
-            if (rootPoolParent == null)
-            {
-                GameObject root = new GameObject("PoolRoot");
-                root.transform.SetParent(transform, false);
-                rootPoolParent = root.transform;
-            }
+            // The manager object is the default application-pool root. This keeps the Bootstrap
+            // hierarchy flat while each prefab still receives its own Pool_<Prefab> child.
+            rootPoolParent ??= transform;
 
             runtime = new PoolRuntime(
                 rootPoolParent,

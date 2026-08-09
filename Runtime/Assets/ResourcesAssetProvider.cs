@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
@@ -20,8 +21,8 @@ namespace HP.Framework.Assets
             new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
         private readonly Dictionary<UnityEngine.Object, string> assetKeys =
             new Dictionary<UnityEngine.Object, string>();
-        private readonly Dictionary<string, SemaphoreSlim> loadLocks =
-            new Dictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> loadLocks =
+            new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.Ordinal);
         private readonly HashSet<GameObject> instances = new HashSet<GameObject>();
 
         private bool disposed;
@@ -183,14 +184,7 @@ namespace HP.Framework.Assets
 
         private SemaphoreSlim GetLoadLock(string key)
         {
-            if (loadLocks.TryGetValue(key, out SemaphoreSlim existing))
-            {
-                return existing;
-            }
-
-            SemaphoreSlim created = new SemaphoreSlim(1, 1);
-            loadLocks.Add(key, created);
-            return created;
+            return loadLocks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         }
 
         private void ThrowIfDisposed()

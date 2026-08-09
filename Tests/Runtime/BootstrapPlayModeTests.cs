@@ -50,6 +50,14 @@ namespace HP.Framework.Tests
         }
     }
 
+    public sealed class OwnedPopupProbe : BasePopup
+    {
+    }
+
+    public sealed class OwnedScreenProbe : BaseScreen
+    {
+    }
+
     public sealed class ScopeArchitecturePlayModeTests
     {
         public sealed class ScopedMarker : IDisposable
@@ -101,6 +109,184 @@ namespace HP.Framework.Tests
 
     public sealed class BootstrapPlayModeTests
     {
+        [UnityTest]
+        public IEnumerator UIManager_ClearOwnedViews_DisablesThenDestroysRegisteredInstances()
+        {
+            GameObject root = new GameObject("UIManagerOwnershipTest");
+            GameObject popupObject = new GameObject(
+                "OwnedPopup",
+                typeof(RectTransform),
+                typeof(CanvasGroup));
+            GameObject screenObject = new GameObject("OwnedScreen", typeof(RectTransform));
+            try
+            {
+                UIManager uiManager = root.AddComponent<UIManager>();
+                OwnedPopupProbe popup = popupObject.AddComponent<OwnedPopupProbe>();
+                OwnedScreenProbe screen = screenObject.AddComponent<OwnedScreenProbe>();
+                uiManager.RegisterPopup(popup);
+                uiManager.RegisterScreen(screen);
+
+                Assert.That(popupObject.activeSelf, Is.True);
+                Assert.That(screenObject.activeSelf, Is.True);
+
+                uiManager.ClearPopups();
+                uiManager.ClearScreens();
+
+                Assert.That(popupObject.activeSelf, Is.False);
+                Assert.That(screenObject.activeSelf, Is.False);
+                Assert.That(uiManager.GetPopup<OwnedPopupProbe>(), Is.Null);
+                Assert.That(uiManager.GetScreen<OwnedScreenProbe>(), Is.Null);
+
+                yield return null;
+                Assert.That(popup == null, Is.True);
+                Assert.That(screen == null, Is.True);
+            }
+            finally
+            {
+                if (popupObject != null)
+                {
+                    UnityEngine.Object.Destroy(popupObject);
+                }
+                if (screenObject != null)
+                {
+                    UnityEngine.Object.Destroy(screenObject);
+                }
+                UnityEngine.Object.Destroy(root);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator RippleSurfaceClock_AdvancesOnGpuClockAndPreservesPauseResume()
+        {
+            GameObject surfaceObject = new GameObject("RippleClockTest");
+            surfaceObject.SetActive(false);
+            surfaceObject.AddComponent<MeshRenderer>();
+            HP.Framework.Graphics.RippleSurfaceController controller =
+                surfaceObject.AddComponent<HP.Framework.Graphics.RippleSurfaceController>();
+            surfaceObject.SetActive(true);
+
+            try
+            {
+                float start = controller.EffectTime;
+                yield return new WaitForSeconds(0.05f);
+                float advanced = controller.EffectTime;
+                Assert.That(advanced, Is.GreaterThan(start + 0.01f));
+
+                controller.Pause();
+                float paused = controller.EffectTime;
+                yield return new WaitForSeconds(0.05f);
+                Assert.That(controller.EffectTime, Is.EqualTo(paused).Within(0.005f));
+
+                controller.SetTimeScale(2f);
+                controller.Resume();
+                yield return new WaitForSeconds(0.05f);
+                Assert.That(controller.EffectTime, Is.GreaterThan(paused + 0.05f));
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(surfaceObject);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator BubblingSurfaceClock_AdvancesOnGpuClockAndPreservesPauseResume()
+        {
+            GameObject surfaceObject = new GameObject("BubblingClockTest");
+            surfaceObject.SetActive(false);
+            MeshRenderer renderer = surfaceObject.AddComponent<MeshRenderer>();
+            HP.Framework.Graphics.BubblingSurfaceController controller =
+                surfaceObject.AddComponent<HP.Framework.Graphics.BubblingSurfaceController>();
+            surfaceObject.SetActive(true);
+
+            var propertyBlock = new MaterialPropertyBlock();
+            int effectTimeId = Shader.PropertyToID("_EffectTime");
+            int effectTimeScaleId = Shader.PropertyToID("_EffectTimeScale");
+
+            try
+            {
+                renderer.GetPropertyBlock(propertyBlock);
+                float gpuBaseTime = propertyBlock.GetFloat(effectTimeId);
+                Assert.That(propertyBlock.GetFloat(effectTimeScaleId), Is.GreaterThan(0f));
+
+                float start = controller.EffectTime;
+                yield return new WaitForSeconds(0.05f);
+                float advanced = controller.EffectTime;
+                Assert.That(advanced, Is.GreaterThan(start + 0.01f));
+
+                renderer.GetPropertyBlock(propertyBlock);
+                Assert.That(
+                    propertyBlock.GetFloat(effectTimeId),
+                    Is.EqualTo(gpuBaseTime).Within(0.001f),
+                    "Scaled runtime playback should advance in the shader without rewriting _EffectTime every frame.");
+
+                controller.PauseAnimation();
+                float paused = controller.EffectTime;
+                renderer.GetPropertyBlock(propertyBlock);
+                Assert.That(propertyBlock.GetFloat(effectTimeScaleId), Is.EqualTo(0f).Within(0.0001f));
+                yield return new WaitForSeconds(0.05f);
+                Assert.That(controller.EffectTime, Is.EqualTo(paused).Within(0.005f));
+
+                controller.SetAnimationTimeScale(2f);
+                controller.ResumeAnimation();
+                yield return new WaitForSeconds(0.05f);
+                Assert.That(controller.EffectTime, Is.GreaterThan(paused + 0.05f));
+
+                controller.enabled = false;
+                float disabledTime = controller.EffectTime;
+                renderer.GetPropertyBlock(propertyBlock);
+                Assert.That(propertyBlock.GetFloat(effectTimeScaleId), Is.EqualTo(0f).Within(0.0001f));
+                yield return new WaitForSeconds(0.05f);
+                Assert.That(controller.EffectTime, Is.EqualTo(disabledTime).Within(0.005f));
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(surfaceObject);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator BubblingSurfaceClock_UnscaledFallbackAdvancesWhenGameTimeIsPaused()
+        {
+            float originalTimeScale = Time.timeScale;
+            GameObject surfaceObject = new GameObject("BubblingUnscaledClockTest");
+            surfaceObject.SetActive(false);
+            MeshRenderer renderer = surfaceObject.AddComponent<MeshRenderer>();
+            HP.Framework.Graphics.BubblingSurfaceController controller =
+                surfaceObject.AddComponent<HP.Framework.Graphics.BubblingSurfaceController>();
+            SetField(controller, "useUnscaledTime", true);
+            surfaceObject.SetActive(true);
+
+            var propertyBlock = new MaterialPropertyBlock();
+            int effectTimeScaleId = Shader.PropertyToID("_EffectTimeScale");
+
+            try
+            {
+                renderer.GetPropertyBlock(propertyBlock);
+                Assert.That(
+                    propertyBlock.GetFloat(effectTimeScaleId),
+                    Is.EqualTo(0f).Within(0.0001f),
+                    "Unscaled-time playback should use the CPU fallback instead of shader _Time.");
+
+                Time.timeScale = 0f;
+                float start = controller.EffectTime;
+                yield return new WaitForSecondsRealtime(0.05f);
+                Assert.That(controller.EffectTime, Is.GreaterThan(start + 0.01f));
+            }
+            finally
+            {
+                Time.timeScale = originalTimeScale;
+                UnityEngine.Object.Destroy(surfaceObject);
+            }
+
+            yield return null;
+        }
+
         [UnityTest]
         public IEnumerator ChildScope_CanShadowUIAndPool_WithItsOwnResolver()
         {
@@ -229,21 +415,26 @@ namespace HP.Framework.Tests
             root.SetActive(false);
 
             RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
-            AudioManager audioManager = root.AddComponent<AudioManager>();
-            UIManager uiManager = root.AddComponent<UIManager>();
-            InputManager inputManager = root.AddComponent<InputManager>();
-            GameSceneManager sceneManager = root.AddComponent<GameSceneManager>();
-            PoolManager poolManager = root.AddComponent<PoolManager>();
-            HapticManager hapticManager = root.AddComponent<HapticManager>();
+            Transform audioRoot = CreateChild(root.transform, "Audio");
+            AudioManager audioManager = audioRoot.gameObject.AddComponent<AudioManager>();
+            Transform uiRoot = CreateChild(root.transform, "UI");
+            UIManager uiManager = uiRoot.gameObject.AddComponent<UIManager>();
+            Transform inputRoot = CreateChild(root.transform, "Input");
+            InputManager inputManager = inputRoot.gameObject.AddComponent<InputManager>();
+            Transform sceneRoot = CreateChild(root.transform, "Scene");
+            GameSceneManager sceneManager = sceneRoot.gameObject.AddComponent<GameSceneManager>();
+            Transform poolsRoot = CreateChild(root.transform, "Pools");
+            PoolManager poolManager = poolsRoot.gameObject.AddComponent<PoolManager>();
+            Transform hapticsRoot = CreateChild(root.transform, "Haptics");
+            HapticManager hapticManager = hapticsRoot.gameObject.AddComponent<HapticManager>();
 
-            Camera uiCamera = CreateChild(root.transform, "UICamera")
+            Camera uiCamera = CreateChild(uiRoot, "UICamera")
                 .gameObject.AddComponent<Camera>();
-            RectTransform canvasRoot = CreateRectChild(root.transform, "UICanvas");
-            RectTransform screenCanvas = CreateRectChild(canvasRoot, "ScreenCanvas");
-            RectTransform popupCanvas = CreateRectChild(canvasRoot, "PopupCanvas");
-            RectTransform notificationCanvas = CreateRectChild(canvasRoot, "NotificationCanvas");
-            RectTransform lockCanvas = CreateRectChild(canvasRoot, "LockCanvas");
-            Transform poolRoot = CreateChild(root.transform, "PoolRoot");
+            RectTransform canvasRoot = CreateRectChild(uiRoot, "UICanvas");
+            RectTransform screenRoot = CreateRectChild(canvasRoot, "ScreenRoot");
+            RectTransform popupRoot = CreateRectChild(canvasRoot, "PopupRoot");
+            RectTransform notificationRoot = CreateRectChild(canvasRoot, "NotificationRoot");
+            RectTransform inputBlocker = CreateRectChild(canvasRoot, "InputBlocker");
 
             SetField(scope, "audioManager", audioManager);
             SetField(scope, "uiManager", uiManager);
@@ -252,12 +443,12 @@ namespace HP.Framework.Tests
             SetField(scope, "poolManager", poolManager);
             SetField(scope, "hapticManager", hapticManager);
 
-            SetField(uiManager, "screenCanvas", screenCanvas);
-            SetField(uiManager, "popupCanvas", popupCanvas);
-            SetField(uiManager, "notiCanvas", notificationCanvas);
-            SetField(uiManager, "lockCanvas", lockCanvas);
+            SetField(uiManager, "screenRoot", screenRoot);
+            SetField(uiManager, "popupRoot", popupRoot);
+            SetField(uiManager, "notificationRoot", notificationRoot);
+            SetField(uiManager, "inputBlocker", inputBlocker);
             SetField(uiManager, "uiCamera", uiCamera);
-            SetField(poolManager, "rootPoolParent", poolRoot);
+            SetField(poolManager, "rootPoolParent", poolsRoot);
 
             return root;
         }

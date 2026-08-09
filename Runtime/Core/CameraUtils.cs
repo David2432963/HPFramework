@@ -26,6 +26,8 @@ namespace HP.Framework.Common
         #region Constants
 
         private const float Bounds2DDepth = BaseConstants.Bounds2DDepth;
+        public const int FrustumPlaneCount = 6;
+        private static readonly Plane[] SharedFrustumPlanes = new Plane[FrustumPlaneCount];
 
         #endregion
 
@@ -244,10 +246,54 @@ namespace HP.Framework.Common
 
         #region Visibility
 
-        // Checks if a renderer bounds intersects the camera frustum.
-        public static bool IsObjectVisible(Camera self, Renderer renderer) =>
-            self != null && renderer != null &&
-            GeometryUtility.TestPlanesAABB(GeometryUtility.CalculateFrustumPlanes(self), renderer.bounds);
+        // Creates a reusable six-plane buffer for caller-cached frustum queries.
+        public static Plane[] CreateFrustumPlaneBuffer()
+        {
+            return new Plane[FrustumPlaneCount];
+        }
+
+        // Fills a caller-owned six-plane buffer without allocating.
+        public static bool CalculateFrustumPlanesNonAlloc(Camera camera, Plane[] results)
+        {
+            if (camera == null || results == null || results.Length != FrustumPlaneCount)
+            {
+                return false;
+            }
+
+            GeometryUtility.CalculateFrustumPlanes(camera, results);
+            return true;
+        }
+
+        // Checks bounds against caller-cached frustum planes without allocating.
+        public static bool IsBoundsVisible(Bounds bounds, Plane[] frustumPlanes)
+        {
+            return IsValidFrustumPlaneBuffer(frustumPlanes)
+                && GeometryUtility.TestPlanesAABB(frustumPlanes, bounds);
+        }
+
+        // Checks renderer bounds against caller-cached frustum planes without allocating.
+        public static bool IsObjectVisible(Renderer renderer, Plane[] frustumPlanes)
+        {
+            return renderer != null && IsBoundsVisible(renderer.bounds, frustumPlanes);
+        }
+
+        // Checks if a renderer bounds intersects the camera frustum. This convenience overload
+        // reuses an internal buffer; cache your own planes when testing many objects per camera.
+        public static bool IsObjectVisible(Camera self, Renderer renderer)
+        {
+            return self != null
+                && renderer != null
+                && CalculateFrustumPlanesNonAlloc(self, SharedFrustumPlanes)
+                && IsObjectVisible(renderer, SharedFrustumPlanes);
+        }
+
+        // Checks bounds against a camera frustum using the shared non-alloc convenience buffer.
+        public static bool IsBoundsVisible(Camera camera, Bounds bounds)
+        {
+            return camera != null
+                && CalculateFrustumPlanesNonAlloc(camera, SharedFrustumPlanes)
+                && IsBoundsVisible(bounds, SharedFrustumPlanes);
+        }
 
         // Checks if a world point is inside the camera viewport.
         public static bool IsPointVisible(Camera self, Vector3 point)
@@ -282,25 +328,39 @@ namespace HP.Framework.Common
             return GetBounds(posCamera).Intersects(other);
         }
 
-        // Checks if a target transform position is inside the camera frustum.
-        public static bool IsTargetVisible(Transform go, Camera camera)
+        // Checks if a target transform position is inside caller-cached frustum planes.
+        public static bool IsTargetVisible(Transform target, Plane[] frustumPlanes)
         {
-            if (go == null || camera == null)
+            if (target == null || !IsValidFrustumPlaneBuffer(frustumPlanes))
             {
                 return false;
             }
 
-            Plane[] planes = GeometryUtility.CalculateFrustumPlanes(camera);
-            Vector3 point = go.position;
-            for (int i = 0; i < planes.Length; i++)
+            Vector3 point = target.position;
+            for (int i = 0; i < FrustumPlaneCount; i++)
             {
-                if (planes[i].GetDistanceToPoint(point) < 0)
+                if (frustumPlanes[i].GetDistanceToPoint(point) < 0f)
                 {
                     return false;
                 }
             }
 
             return true;
+        }
+
+        // Checks if a target transform position is inside the camera frustum. This convenience
+        // overload reuses an internal buffer; cache your own planes for bulk visibility checks.
+        public static bool IsTargetVisible(Transform target, Camera camera)
+        {
+            return target != null
+                && camera != null
+                && CalculateFrustumPlanesNonAlloc(camera, SharedFrustumPlanes)
+                && IsTargetVisible(target, SharedFrustumPlanes);
+        }
+
+        private static bool IsValidFrustumPlaneBuffer(Plane[] frustumPlanes)
+        {
+            return frustumPlanes != null && frustumPlanes.Length == FrustumPlaneCount;
         }
 
         #endregion
