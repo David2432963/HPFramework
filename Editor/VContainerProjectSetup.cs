@@ -39,10 +39,14 @@ namespace HP.Framework.Editor
                 throw new ArgumentNullException(nameof(rootScope));
             }
 
-            VContainerSettings settings = FindOrCreateSettings();
+            VContainerSettings settings = FindOrCreateSettings(rootScope, out bool createdSettings);
             settings.RootLifetimeScope = rootScope;
-            // Diagnostics are intentionally opt-in because VContainer's collector has runtime cost.
-            settings.EnableDiagnostics = false;
+            // Diagnostics are opt-in for newly created settings, but Repair must preserve a
+            // project's explicit diagnostics choice on an existing VContainerSettings asset.
+            if (createdSettings)
+            {
+                settings.EnableDiagnostics = false;
+            }
 
             List<UnityEngine.Object> preloadedAssets = PlayerSettings.GetPreloadedAssets()
                 .Where(asset => asset != null && !(asset is VContainerSettings))
@@ -232,30 +236,71 @@ namespace HP.Framework.Editor
             return packageFallback ?? fallback;
         }
 
-        private static VContainerSettings FindOrCreateSettings()
+        private static VContainerSettings FindOrCreateSettings(
+            RootLifetimeScope rootScope,
+            out bool created)
         {
-            VContainerSettings settings = PlayerSettings.GetPreloadedAssets()
+            created = false;
+            VContainerSettings[] preloadedSettings = PlayerSettings.GetPreloadedAssets()
                 .OfType<VContainerSettings>()
-                .FirstOrDefault();
-            if (settings != null)
+                .Where(settings => settings != null)
+                .ToArray();
+
+            if (preloadedSettings.Length == 1)
             {
-                return settings;
+                return preloadedSettings[0];
             }
 
-            string[] guids = AssetDatabase.FindAssets("t:VContainerSettings");
-            if (guids.Length > 0)
+            if (preloadedSettings.Length > 1)
             {
-                string existingPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                settings = AssetDatabase.LoadAssetAtPath<VContainerSettings>(existingPath);
-                if (settings != null)
+                VContainerSettings matchingRoot = preloadedSettings.FirstOrDefault(
+                    settings => settings.RootLifetimeScope == rootScope);
+                if (matchingRoot != null)
                 {
-                    return settings;
+                    return matchingRoot;
+                }
+
+                VContainerSettings canonicalPreloaded = preloadedSettings.FirstOrDefault(
+                    settings => string.Equals(
+                        AssetDatabase.GetAssetPath(settings),
+                        SettingsPath,
+                        StringComparison.OrdinalIgnoreCase));
+                if (canonicalPreloaded != null)
+                {
+                    return canonicalPreloaded;
                 }
             }
 
+            VContainerSettings canonical = AssetDatabase.LoadAssetAtPath<VContainerSettings>(
+                SettingsPath);
+            if (canonical != null)
+            {
+                return canonical;
+            }
+
+            string[] guids = AssetDatabase.FindAssets("t:VContainerSettings");
+            if (guids.Length == 1)
+            {
+                string onlyPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                VContainerSettings onlySettings =
+                    AssetDatabase.LoadAssetAtPath<VContainerSettings>(onlyPath);
+                if (onlySettings != null)
+                {
+                    return onlySettings;
+                }
+            }
+            else if (guids.Length > 1)
+            {
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] Found multiple VContainerSettings assets. " +
+                    $"Setup will create/use the deterministic framework settings at '{SettingsPath}' " +
+                    "instead of selecting an arbitrary asset.");
+            }
+
             EnsureFolder(HPFrameworkProjectPaths.SettingsFolder);
-            settings = ScriptableObject.CreateInstance<VContainerSettings>();
+            VContainerSettings settings = ScriptableObject.CreateInstance<VContainerSettings>();
             AssetDatabase.CreateAsset(settings, SettingsPath);
+            created = true;
             return settings;
         }
 

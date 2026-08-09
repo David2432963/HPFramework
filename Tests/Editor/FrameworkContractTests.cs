@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
@@ -200,6 +201,45 @@ namespace HP.Framework.Tests
             Assert.Throws<ArgumentException>(() => JsonSaveFile.GetPath("save", "../outside"));
             Assert.Throws<ArgumentException>(() => JsonSaveFile.GetPath("save", "../../outside"));
         }
+
+        [Test]
+        public void CameraFrustumQueries_ReuseCallerOwnedPlaneBuffer()
+        {
+            GameObject cameraObject = new GameObject("CameraFrustumBufferTest");
+            GameObject targetObject = new GameObject("CameraFrustumTargetTest");
+            try
+            {
+                Camera camera = cameraObject.AddComponent<Camera>();
+                camera.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+                camera.nearClipPlane = 0.3f;
+                camera.farClipPlane = 100f;
+                camera.fieldOfView = 60f;
+                camera.aspect = 1f;
+
+                Plane[] planes = CameraUtils.CreateFrustumPlaneBuffer();
+                Assert.That(planes, Has.Length.EqualTo(CameraUtils.FrustumPlaneCount));
+                Assert.That(CameraUtils.CalculateFrustumPlanesNonAlloc(camera, planes), Is.True);
+                Assert.That(
+                    CameraUtils.CalculateFrustumPlanesNonAlloc(camera, new Plane[5]),
+                    Is.False);
+
+                Bounds visibleBounds = new Bounds(new Vector3(0f, 0f, 5f), Vector3.one);
+                Bounds hiddenBounds = new Bounds(new Vector3(0f, 0f, -5f), Vector3.one);
+                Assert.That(CameraUtils.IsBoundsVisible(visibleBounds, planes), Is.True);
+                Assert.That(CameraUtils.IsBoundsVisible(hiddenBounds, planes), Is.False);
+                Assert.That(CameraUtils.IsBoundsVisible(camera, visibleBounds), Is.True);
+
+                targetObject.transform.position = new Vector3(0f, 0f, 5f);
+                Assert.That(CameraUtils.IsTargetVisible(targetObject.transform, planes), Is.True);
+                targetObject.transform.position = new Vector3(0f, 0f, -5f);
+                Assert.That(CameraUtils.IsTargetVisible(targetObject.transform, planes), Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(targetObject);
+            }
+        }
     }
 
     public sealed class PopupTransitionPreviewContractTests
@@ -316,6 +356,175 @@ namespace HP.Framework.Tests
     public sealed class BootstrapRepairTests
     {
         [Test]
+        public void CatalogRepair_PreservesExplicitScopeAndManagerAssets()
+        {
+            GameObject root = new GameObject("BootstrapCatalogRepairTest");
+            AudioLibrarySO customAudio = ScriptableObject.CreateInstance<AudioLibrarySO>();
+            UICatalogSO customUi = ScriptableObject.CreateInstance<UICatalogSO>();
+            try
+            {
+                RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
+                AudioManager audioManager = root.AddComponent<AudioManager>();
+                UIManager uiManager = root.AddComponent<UIManager>();
+
+                SerializedObject scopeObject = new SerializedObject(scope);
+                scopeObject.FindProperty("audioLibrary").objectReferenceValue = customAudio;
+                scopeObject.FindProperty("uiCatalog").objectReferenceValue = customUi;
+                scopeObject.ApplyModifiedPropertiesWithoutUndo();
+
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupScriptableObjects(scope);
+
+                scopeObject.Update();
+                Assert.That(
+                    scopeObject.FindProperty("audioLibrary").objectReferenceValue,
+                    Is.SameAs(customAudio));
+                Assert.That(
+                    scopeObject.FindProperty("uiCatalog").objectReferenceValue,
+                    Is.SameAs(customUi));
+
+                SerializedObject audioObject = new SerializedObject(audioManager);
+                SerializedObject uiObject = new SerializedObject(uiManager);
+                Assert.That(
+                    audioObject.FindProperty("audioLibrary").objectReferenceValue,
+                    Is.SameAs(customAudio));
+                Assert.That(
+                    uiObject.FindProperty("uiCatalog").objectReferenceValue,
+                    Is.SameAs(customUi));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(customAudio);
+                UnityEngine.Object.DestroyImmediate(customUi);
+            }
+        }
+
+        [Test]
+        public void Reset_UsesDomainOwnedHierarchy_AndLeanUIDefaults()
+        {
+            GameObject root = new GameObject("BootstrapHierarchyDefaultsTest");
+            try
+            {
+                RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupHierarchy(scope, resetDefaults: true);
+
+                Assert.That(root.GetComponent<AudioManager>(), Is.Null);
+                Assert.That(root.GetComponent<UIManager>(), Is.Null);
+                Assert.That(root.GetComponent<GameSceneManager>(), Is.Null);
+                Assert.That(root.GetComponent<PoolManager>(), Is.Null);
+                Assert.That(root.GetComponent<HapticManager>(), Is.Null);
+
+                Assert.That(root.transform.Find("Audio").GetComponent<AudioManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("UI").GetComponent<UIManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Scene").GetComponent<GameSceneManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Pools").GetComponent<PoolManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Haptics").GetComponent<HapticManager>(), Is.Not.Null);
+
+                Transform uiRoot = root.transform.Find("UI");
+                Camera uiCamera = uiRoot.Find("UICamera").GetComponent<Camera>();
+                Canvas canvas = uiRoot.Find("UICanvas").GetComponent<Canvas>();
+                Assert.That(uiCamera.allowHDR, Is.False);
+                Assert.That(uiCamera.allowMSAA, Is.False);
+                Assert.That(uiCamera.allowDynamicResolution, Is.False);
+                Assert.That(uiCamera.useOcclusionCulling, Is.False);
+                Assert.That(canvas.additionalShaderChannels, Is.EqualTo(AdditionalCanvasShaderChannels.None));
+
+                Transform canvasRoot = uiRoot.Find("UICanvas");
+                Assert.That(canvasRoot.Find("ScreenRoot"), Is.Not.Null);
+                Assert.That(canvasRoot.Find("PopupRoot"), Is.Not.Null);
+                Assert.That(canvasRoot.Find("NotificationRoot"), Is.Not.Null);
+                Assert.That(canvasRoot.Find("InputBlocker"), Is.Not.Null);
+                Assert.That(uiRoot.Find("EventSystem").GetComponent<EventSystem>(), Is.Not.Null);
+                Assert.That(uiRoot.Find("EventSystem").GetComponent<BaseInputModule>(), Is.Not.Null);
+
+                SerializedObject poolObject = new SerializedObject(
+                    root.transform.Find("Pools").GetComponent<PoolManager>());
+                Assert.That(
+                    poolObject.FindProperty("rootPoolParent").objectReferenceValue,
+                    Is.SameAs(root.transform.Find("Pools")));
+                Assert.That(root.transform.Find("PoolRoot"), Is.Null);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Repair_PreservesLegacyOwnership_WhileResetMigratesToCanonicalDomains()
+        {
+            GameObject root = new GameObject("BootstrapLegacyMigrationTest");
+            try
+            {
+                RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
+                AudioManager audioManager = root.AddComponent<AudioManager>();
+                UIManager uiManager = root.AddComponent<UIManager>();
+                InputManager inputManager = root.AddComponent<InputManager>();
+                GameSceneManager sceneManager = root.AddComponent<GameSceneManager>();
+                PoolManager poolManager = root.AddComponent<PoolManager>();
+                HapticManager hapticManager = root.AddComponent<HapticManager>();
+
+                SerializedObject scopeObject = new SerializedObject(scope);
+                scopeObject.FindProperty("audioManager").objectReferenceValue = audioManager;
+                scopeObject.FindProperty("uiManager").objectReferenceValue = uiManager;
+                scopeObject.FindProperty("inputManager").objectReferenceValue = inputManager;
+                scopeObject.FindProperty("gameSceneManager").objectReferenceValue = sceneManager;
+                scopeObject.FindProperty("poolManager").objectReferenceValue = poolManager;
+                scopeObject.FindProperty("hapticManager").objectReferenceValue = hapticManager;
+                scopeObject.ApplyModifiedPropertiesWithoutUndo();
+
+                GameObject legacyCameraObject = new GameObject("UICamera");
+                legacyCameraObject.transform.SetParent(root.transform, false);
+                legacyCameraObject.AddComponent<Camera>();
+                GameObject legacyCanvasObject = new GameObject("UICanvas", typeof(RectTransform));
+                legacyCanvasObject.transform.SetParent(root.transform, false);
+                legacyCanvasObject.AddComponent<Canvas>();
+                legacyCanvasObject.AddComponent<CanvasScaler>();
+                legacyCanvasObject.AddComponent<GraphicRaycaster>();
+                CreateRectChild(legacyCanvasObject.transform, "ScreenCanvas");
+                CreateRectChild(legacyCanvasObject.transform, "PopupCanvas");
+                CreateRectChild(legacyCanvasObject.transform, "NotiCanvas");
+                CreateRectChild(legacyCanvasObject.transform, "LockCanvas");
+                GameObject poolRootObject = new GameObject("PoolRoot");
+                poolRootObject.transform.SetParent(root.transform, false);
+
+                SerializedObject poolObject = new SerializedObject(poolManager);
+                poolObject.FindProperty("rootPoolParent").objectReferenceValue = poolRootObject.transform;
+                poolObject.ApplyModifiedPropertiesWithoutUndo();
+
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupHierarchy(scope, resetDefaults: false);
+                Assert.That(root.GetComponent<AudioManager>(), Is.SameAs(audioManager));
+                Assert.That(root.transform.Find("UICamera"), Is.Not.Null);
+                Assert.That(root.transform.Find("UICanvas/ScreenCanvas"), Is.Not.Null);
+                Assert.That(root.transform.Find("Audio"), Is.Null);
+
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupHierarchy(scope, resetDefaults: true);
+                Assert.That(root.GetComponent<AudioManager>(), Is.Null);
+                Assert.That(root.transform.Find("Audio")?.GetComponent<AudioManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("UI/UICamera"), Is.Not.Null);
+                Assert.That(root.transform.Find("UI/UICanvas/ScreenRoot"), Is.Not.Null);
+                Assert.That(root.transform.Find("UI/UICanvas/PopupRoot"), Is.Not.Null);
+                Assert.That(root.transform.Find("UI/UICanvas/NotificationRoot"), Is.Not.Null);
+                Assert.That(root.transform.Find("UI/UICanvas/InputBlocker"), Is.Not.Null);
+                Assert.That(root.transform.Find("UICamera"), Is.Null);
+                Assert.That(root.transform.Find("UICanvas"), Is.Null);
+                Assert.That(root.transform.Find("PoolRoot"), Is.Null);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        private static RectTransform CreateRectChild(Transform parent, string name)
+        {
+            GameObject child = new GameObject(name, typeof(RectTransform));
+            RectTransform rect = child.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            return rect;
+        }
+
+        [Test]
         public void Repair_PreservesCustomCanvasSettings_WhileResetRestoresDefaults()
         {
             GameObject root = new GameObject("BootstrapRepairTest");
@@ -324,7 +533,7 @@ namespace HP.Framework.Tests
                 RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
                 HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupHierarchy(scope, resetDefaults: true);
 
-                CanvasScaler scaler = root.transform.Find("UICanvas").GetComponent<CanvasScaler>();
+                CanvasScaler scaler = root.transform.Find("UI/UICanvas").GetComponent<CanvasScaler>();
                 scaler.referenceResolution = new Vector2(1920f, 1080f);
                 scaler.matchWidthOrHeight = 0.9f;
 
@@ -366,12 +575,33 @@ namespace HP.Framework.Tests
 
                 Assert.That(missingScripts, Is.Zero);
                 Assert.That(root.GetComponent<RootLifetimeScope>(), Is.Not.Null);
-                Assert.That(root.GetComponent<AudioManager>(), Is.Not.Null);
-                Assert.That(root.GetComponent<UIManager>(), Is.Not.Null);
-                Assert.That(root.GetComponent<InputManager>(), Is.Not.Null);
-                Assert.That(root.GetComponent<GameSceneManager>(), Is.Not.Null);
-                Assert.That(root.GetComponent<PoolManager>(), Is.Not.Null);
-                Assert.That(root.GetComponent<HapticManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Audio")?.GetComponent<AudioManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("UI")?.GetComponent<UIManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Input")?.GetComponent<InputManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Scene")?.GetComponent<GameSceneManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Pools")?.GetComponent<PoolManager>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Haptics")?.GetComponent<HapticManager>(), Is.Not.Null);
+
+                Transform uiRoot = root.transform.Find("UI");
+                Transform eventSystemRoot = uiRoot?.Find("EventSystem");
+                Assert.That(eventSystemRoot?.GetComponent<EventSystem>(), Is.Not.Null);
+                Assert.That(
+                    eventSystemRoot?.GetComponent<BaseInputModule>(),
+                    Is.Null,
+                    "The reusable template must not serialize an optional input-module package reference; " +
+                    "Setup/Reset adds the project-appropriate module when generating Bootstrap.");
+
+                Type urpCameraDataType = Type.GetType(
+                    "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime",
+                    throwOnError: false);
+                if (urpCameraDataType != null)
+                {
+                    Camera templateCamera = uiRoot.Find("UICamera").GetComponent<Camera>();
+                    Assert.That(
+                        templateCamera.GetComponent(urpCameraDataType),
+                        Is.Null,
+                        "The reusable template must remain URP-optional; Setup configures overlay data in projects that have URP.");
+                }
             }
             finally
             {

@@ -6,7 +6,8 @@
     /// <summary>
     /// Lightweight generic event hub.
     /// Supports both parameterless callbacks (Action) and parameterized callbacks (Action<object>).
-    /// Optimized for mobile with zero GC allocations (no boxing) for Enum keys.
+    /// Publish paths avoid enum-key boxing; subscriptions, SubscribeOnce closures and
+    /// diagnostic listener-count queries may allocate.
     /// 
     /// Example Usage:
     /// <code>
@@ -267,7 +268,8 @@
         }
 
         /// <summary>
-        /// Broadcast a typed event to all matching typed and parameterless listeners with ZERO GC allocation.
+        /// Broadcast a typed event without boxing for typed listeners. If an Action<object>
+        /// listener is also registered, a value-type payload can still be boxed for that legacy path.
         /// </summary>
         public static void Publish<TEnum, TData>(TEnum eventId, TData param) where TEnum : struct, Enum
         {

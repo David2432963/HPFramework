@@ -15,11 +15,14 @@ All notable changes to HP Framework are documented here.
 - Hardened URP UI camera setup: UICamera is configured as Overlay and attached exactly once to the active Main Camera, which is configured as Base when URP is available.
 - Added scope-owned `IEventBus` / `EventBus` with `RegisterScopeEventBus()` while retaining the static `Observer` compatibility API.
 - Setup repair is now non-destructive by default; framework UI defaults are reapplied only through the explicit reset action.
+- Reorganized the default Bootstrap into domain-owned `Audio`, `UI`, `Input`, `Scene`, `Pools`, and `Haptics` roots; renamed UI mount points to `ScreenRoot`, `PopupRoot`, `NotificationRoot`, and `InputBlocker`; and made Reset migrate the legacy layout while normal Repair preserves existing ownership.
 - Made the Input System integration optional in editable `Assets/Plugins` mode by removing Bootstrap/Editor hard references and gating `HP.Framework.Input` with a package version define.
 - Optimized pooling by caching `IPoolable` components per instance instead of scanning hierarchies on every spawn/despawn.
 - Hardened UI catalog replacement/clear paths so registered views are destroyed instead of becoming orphaned.
 - Serialized JSON file operations per save path and reject persistence path traversal outside `Application.persistentDataPath`.
 - Reduced per-frame Graphics/Diagnostics/Safe Area work, added Resources same-key load deduplication, and added non-alloc physics query APIs.
+- Moved Ripple and normal scaled-time Bubbling Surface animation to shader-driven GPU clocks so effect time is not pushed through a MaterialPropertyBlock every frame; unscaled/edit-mode Bubbling playback retains a CPU fallback.
+- Added caller-owned/non-alloc frustum-plane APIs to `CameraUtils` for bulk visibility checks while keeping the existing convenience overloads.
 
 ### Restored / retained
 - Restored Graphics as `HP.Framework.Graphics`.

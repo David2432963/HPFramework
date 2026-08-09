@@ -4,6 +4,7 @@
     using System.Collections.Generic;
     using UnityEngine;
     using UnityEngine.SceneManagement;
+    using UnityEngine.Serialization;
     using HP.Framework.Pooling;
     using HP.Framework;
     using VContainer;
@@ -16,11 +17,15 @@
     /// </summary>
     public class UIManager : MonoBehaviour, IGlobalUIService, IInitializable
     {
-        [Header("UI Canvases & Camera")]
-        [SerializeField] private RectTransform screenCanvas;
-        [SerializeField] private RectTransform popupCanvas;
-        [SerializeField] private RectTransform notiCanvas;
-        [SerializeField] private RectTransform lockCanvas;
+        [Header("UI Roots & Camera")]
+        [FormerlySerializedAs("screenCanvas")]
+        [SerializeField] private RectTransform screenRoot;
+        [FormerlySerializedAs("popupCanvas")]
+        [SerializeField] private RectTransform popupRoot;
+        [FormerlySerializedAs("notiCanvas")]
+        [SerializeField] private RectTransform notificationRoot;
+        [FormerlySerializedAs("lockCanvas")]
+        [SerializeField] private RectTransform inputBlocker;
         [SerializeField] private Camera uiCamera;
 
         [Header("UI Catalog & Prefabs")]
@@ -43,9 +48,9 @@
         public event Action<BasePopup> PopupHidden;
 
         public Camera UICamera => uiCamera;
-        public Transform ScreenRoot => screenCanvas != null ? screenCanvas : transform;
-        public Transform PopupRoot => popupCanvas != null ? popupCanvas : transform;
-        public Transform NotificationRoot => notiCanvas != null ? notiCanvas : transform;
+        public Transform ScreenRoot => screenRoot != null ? screenRoot : transform;
+        public Transform PopupRoot => popupRoot != null ? popupRoot : transform;
+        public Transform NotificationRoot => notificationRoot != null ? notificationRoot : transform;
 
         [Inject]
         public void Construct(IPoolService poolService, IObjectResolver objectResolver)
@@ -213,6 +218,11 @@
 
         public BasePopup OpenPopup(Type type)
         {
+            if (type == null)
+            {
+                throw new ArgumentNullException(nameof(type));
+            }
+
             BaseLog.Log($"[UIManager] OpenPopup: {type.Name}");
             if (TryGetOrCreatePopup(type, out var popup))
             {
@@ -295,7 +305,12 @@
             popups.Clear();
             for (int i = 0; i < activePopupsCache.Count; i++)
             {
-                activePopupsCache[i].Destroy();
+                BasePopup popup = activePopupsCache[i];
+                if (popup.gameObject.activeSelf)
+                {
+                    popup.gameObject.SetActive(false);
+                }
+                popup.Destroy();
             }
             activePopupsCache.Clear();
         }
@@ -330,6 +345,11 @@
 
         public bool TryShowScreenByType(Type screenType)
         {
+            if (screenType == null)
+            {
+                return false;
+            }
+
             BaseLog.Log($"[UIManager] TryShowScreenByType: {screenType.Name}");
             if (TryGetOrCreateScreen(screenType, out var screen))
             {
@@ -355,6 +375,11 @@
 
         public bool TryHideScreenByType(Type screenType)
         {
+            if (screenType == null)
+            {
+                return false;
+            }
+
             BaseLog.Log($"[UIManager] TryHideScreenByType: {screenType.Name}");
             if (screens.TryGetValue(screenType, out var screen))
             {
@@ -388,7 +413,12 @@
             screens.Clear();
             for (int i = 0; i < screensToDestroyCache.Count; i++)
             {
-                screensToDestroyCache[i].Destroy();
+                BaseScreen screen = screensToDestroyCache[i];
+                if (screen.gameObject.activeSelf)
+                {
+                    screen.gameObject.SetActive(false);
+                }
+                screen.Destroy();
             }
             screensToDestroyCache.Clear();
         }
@@ -396,9 +426,9 @@
         public void LockInput(bool isLock)
         {
             BaseLog.Log($"[UIManager] LockInput: {isLock}");
-            if (lockCanvas != null)
+            if (inputBlocker != null)
             {
-                lockCanvas.gameObject.SetActive(isLock);
+                inputBlocker.gameObject.SetActive(isLock);
             }
         }
 
@@ -443,7 +473,7 @@
                 }
 
                 bool isScreen = typeof(BaseScreen).IsAssignableFrom(type);
-                Transform parent = isScreen ? screenCanvas : popupCanvas;
+                Transform parent = isScreen ? ScreenRoot : PopupRoot;
                 GameObject instance = InstantiateWithVContainer(entry.Prefab, parent);
                 if (instance == null)
                 {
@@ -459,6 +489,10 @@
                         RegisterScreen(screen);
                         screen.Initialize();
                     }
+                    else
+                    {
+                        Destroy(instance);
+                    }
                 }
                 else
                 {
@@ -467,6 +501,10 @@
                     {
                         RegisterPopup(popup);
                         popup.Initialize();
+                    }
+                    else
+                    {
+                        Destroy(instance);
                     }
                 }
             }
@@ -490,7 +528,7 @@
 
             if (popupCatalogEntries.TryGetValue(type, out var entry) && entry.Prefab != null)
             {
-                GameObject instance = InstantiateWithVContainer(entry.Prefab, popupCanvas);
+                GameObject instance = InstantiateWithVContainer(entry.Prefab, PopupRoot);
                 popup = instance != null ? instance.GetComponent<BasePopup>() : null;
                 if (popup != null)
                 {
@@ -498,6 +536,11 @@
                     RegisterPopup(popup);
                     popup.Initialize();
                     return true;
+                }
+
+                if (instance != null)
+                {
+                    Destroy(instance);
                 }
             }
 
@@ -514,7 +557,7 @@
 
             if (screenCatalogEntries.TryGetValue(type, out var entry) && entry.Prefab != null)
             {
-                GameObject instance = InstantiateWithVContainer(entry.Prefab, screenCanvas);
+                GameObject instance = InstantiateWithVContainer(entry.Prefab, ScreenRoot);
                 screen = instance != null ? instance.GetComponent<BaseScreen>() : null;
                 if (screen != null)
                 {
@@ -522,6 +565,11 @@
                     RegisterScreen(screen);
                     screen.Initialize();
                     return true;
+                }
+
+                if (instance != null)
+                {
+                    Destroy(instance);
                 }
             }
 
@@ -548,7 +596,7 @@
                 return;
             }
 
-            Transform parent = notiCanvas != null ? notiCanvas : transform;
+            Transform parent = NotificationRoot;
             ToastUI toast = null;
             if (poolService != null)
             {

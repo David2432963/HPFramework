@@ -7,6 +7,7 @@
                        "HP.Framework.Audio",
                        "HP.Framework.Bootstrap",
                        "HP.Framework.Haptics",
+                       "HP.Framework.Graphics",
                        "HP.Framework.Input",
                        "HP.Framework.Persistence",
                        "HP.Framework.Pooling",

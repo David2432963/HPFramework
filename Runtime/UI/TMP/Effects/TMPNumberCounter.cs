@@ -81,6 +81,7 @@ namespace HP.Framework.UI.TMP
                 if (currentValue != lastValue)
                 {
                     lastValue = currentValue;
+                    UpdateText(currentValue);
                     if (Time.unscaledTime - lastAudioTime >= minimumAudioInterval)
                     {
                         PlayStepSound();
@@ -88,12 +89,14 @@ namespace HP.Framework.UI.TMP
                     }
                 }
 
-                UpdateText(currentValue);
                 yield return null;
             }
 
-            currentValue = to;
-            UpdateText(currentValue);
+            if (currentValue != to)
+            {
+                currentValue = to;
+                UpdateText(currentValue);
+            }
             countRoutine = null;
             onComplete?.Invoke();
         }

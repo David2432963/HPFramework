@@ -22,6 +22,8 @@ Shader "Base/InteractiveRippleSurfaceURP"
         _SpecularPower("Specular Power", Range(1, 128)) = 32
 
         [HideInInspector] _EffectTime("Effect Time", Float) = 0
+        [HideInInspector] _EffectTimeReference("Effect Time Reference", Float) = 0
+        [HideInInspector] _EffectTimeScale("Effect Time Scale", Float) = 0
         [HideInInspector] _RippleCount("Ripple Count", Float) = 0
         [HideInInspector] _RippleAxisScale("Ripple Axis Scale", Vector) = (1, 1, 0, 0)
     }
@@ -104,16 +106,25 @@ Shader "Base/InteractiveRippleSurfaceURP"
                 float _SpecularPower;
 
                 float _EffectTime;
+                float _EffectTimeReference;
+                float _EffectTimeScale;
                 float _RippleCount;
                 float4 _RippleAxisScale;
                 float4 _RippleData[MAX_RIPPLES];
             CBUFFER_END
+
+            float GetCurrentEffectTime()
+            {
+                float elapsed = max(_Time.y - _EffectTimeReference, 0.0);
+                return _EffectTime + elapsed * _EffectTimeScale;
+            }
 
             void EvaluateRipples(float2 planePositionOS, out float finalHeight, out float finalMask)
             {
                 finalHeight = 0.0;
                 finalMask = 0.0;
 
+                float currentEffectTime = GetCurrentEffectTime();
                 int rippleCount = min((int)round(_RippleCount), MAX_RIPPLES);
                 float2 axisScale = max(abs(_RippleAxisScale.xy), float2(0.0001, 0.0001));
                 float safeWidth = max(_RippleWidth, 0.0001);
@@ -129,7 +140,7 @@ Shader "Base/InteractiveRippleSurfaceURP"
                     float startTime = ripple.z;
                     float strength = ripple.w;
 
-                    float age = _EffectTime - startTime;
+                    float age = currentEffectTime - startTime;
                     float isAlive = step(0.0, age);
                     age = max(age, 0.0);
 
