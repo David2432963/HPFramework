@@ -4,8 +4,8 @@ using UnityEngine.Rendering;
 namespace HP.Framework.Graphics
 {
     /// <summary>
-    /// Tạo grid mesh nằm trên mặt phẳng XZ với normal hướng lên Y.
-    /// Dùng khi Quad hoặc mesh hiện tại không đủ vertex cho displacement.
+    /// Generates an XZ grid mesh with upward-facing normals.
+    /// Use it when the source mesh does not have enough vertices for displacement.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(MeshFilter))]

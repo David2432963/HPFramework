@@ -97,7 +97,14 @@
             bool preserveCurrentState =
                 previousState == PopupTransitionState.Showing
                 || previousState == PopupTransitionState.Hiding;
-            float duration = transitionPlayer.BeginShow(preserveCurrentState);
+            if (transitionPlayer.TryPlayShow(
+                preserveCurrentState,
+                CompleteShow,
+                out float duration))
+            {
+                return;
+            }
+
             if (duration <= 0f)
             {
                 transitionPlayer.ApplyShow(duration);
@@ -147,7 +154,11 @@
                 return;
             }
 
-            float duration = transitionPlayer.BeginHide();
+            if (transitionPlayer.TryPlayHide(CompleteHide, out float duration))
+            {
+                return;
+            }
+
             if (duration <= 0f)
             {
                 transitionPlayer.ApplyHide(duration);
@@ -230,11 +241,13 @@
         {
             if (activeTransition == null)
             {
+                transitionPlayer?.StopPlayback();
                 return;
             }
 
             StopCoroutine(activeTransition);
             activeTransition = null;
+            transitionPlayer?.StopPlayback();
         }
 
         public void Close()
@@ -302,5 +315,3 @@
 
 
 }
-
-

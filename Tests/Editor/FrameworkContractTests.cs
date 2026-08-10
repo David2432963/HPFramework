@@ -245,6 +245,22 @@ namespace HP.Framework.Tests
     public sealed class PopupTransitionPreviewContractTests
     {
         [Test]
+        public void DotweenBridge_AvailabilityMatchesSequenceCreation()
+        {
+            bool created = DotweenBridge.TryCreateSequence(out object sequence);
+            Assert.That(created, Is.EqualTo(DotweenBridge.IsAvailable));
+
+            if (created)
+            {
+                Assert.That(DotweenBridge.TryKill(sequence), Is.True);
+            }
+            else
+            {
+                Assert.That(sequence, Is.Null);
+            }
+        }
+
+        [Test]
         public void PopupTransitionPlayer_ShowHideAndRestore_AreDeterministic()
         {
             GameObject backdropObject = new GameObject("Backdrop");
@@ -610,6 +626,4 @@ namespace HP.Framework.Tests
         }
     }
 }
-
-
 

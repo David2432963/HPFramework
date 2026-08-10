@@ -193,40 +193,37 @@ namespace HP.Framework.Extensions
         }
         
         /// <summary>
-        /// Parse hex string (#RRGGBB hoặc #RRGGBBAA) thành Color.
+        /// Parses a hex string in #RRGGBB or #RRGGBBAA format.
         /// </summary>
-        /// <param name="hex">Mã hex, ví dụ: "#C6FF3D" hoặc "C6FF3DFF"</param>
-        /// <param name="color">Trả về Color nếu thành công</param>
-        /// <returns>true nếu parse thành công, false nếu lỗi</returns>
+        /// <param name="hex">A value such as "#C6FF3D" or "C6FF3DFF".</param>
+        /// <param name="color">The parsed color, or white when parsing fails.</param>
+        /// <returns>True when the value is a valid HTML color.</returns>
         public static bool TryGetColorFromHex(string hex, out Color color)
         {
-            // Nếu null hoặc rỗng → fail
             if (string.IsNullOrWhiteSpace(hex))
             {
                 color = Color.white;
-                Debug.LogWarning("Hex string rỗng!");
+                Debug.LogWarning("ColorUtils.TryGetColorFromHex received an empty value.");
                 return false;
             }
 
-            // Nếu thiếu "#" thì tự thêm vào
             if (!hex.StartsWith("#"))
+            {
                 hex = "#" + hex;
+            }
 
-            // Dùng Unity built-in parse
             if (ColorUtility.TryParseHtmlString(hex, out color))
             {
                 return true;
             }
-            else
-            {
-                Debug.LogWarning($"Hex không hợp lệ: {hex}");
-                color = Color.white;
-                return false;
-            }
+
+            Debug.LogWarning($"ColorUtils.TryGetColorFromHex received an invalid value: {hex}");
+            color = Color.white;
+            return false;
         }
 
         /// <summary>
-        /// Gán màu cho UI Image từ hex string
+        /// Sets a UI Image color from a hex string.
         /// </summary>
         public static void SetImageColor(this Image img, string hex)
         {
@@ -237,7 +234,7 @@ namespace HP.Framework.Extensions
         }
 
         /// <summary>
-        /// Gán màu cho SpriteRenderer từ hex string
+        /// Sets a SpriteRenderer color from a hex string.
         /// </summary>
         public static void SetSpriteColor(this SpriteRenderer sr, string hex)
         {
@@ -248,7 +245,7 @@ namespace HP.Framework.Extensions
         }
 
         /// <summary>
-        /// Gán màu cho Material từ hex string
+        /// Sets a Material color from a hex string.
         /// </summary>
         public static void SetMaterialColor(this Material mat, string hex, string propertyName = "_Color")
         {

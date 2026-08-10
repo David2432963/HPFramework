@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.CompilerServices;
 using UnityEngine;
 
@@ -24,6 +24,7 @@ namespace HP.Framework.UI
         private float startBackdropAlpha;
         private Vector3 startContentScale;
         private float startContentAlpha;
+        private object activeTween;
 
         public PopupTransitionPlayer(
             CanvasGroup backdropCanvasGroup,
@@ -58,6 +59,22 @@ namespace HP.Framework.UI
             return phase.TotalDuration;
         }
 
+        public bool TryPlayShow(
+            bool preserveCurrentState,
+            Action onComplete,
+            out float duration)
+        {
+            duration = BeginShow(preserveCurrentState);
+            UIAnimationPresetSO.TransitionPhase phase = preset.Show;
+            if (!CanUseDotween(phase))
+            {
+                return false;
+            }
+
+            StopPlayback();
+            return TryBuildTransitionSequence(phase, isShow: true, onComplete);
+        }
+
         public void ApplyShow(float elapsedTime)
         {
             UIAnimationPresetSO.TransitionPhase phase = preset.Show;
@@ -85,6 +102,19 @@ namespace HP.Framework.UI
         {
             CaptureCurrentState();
             return preset.Hide.TotalDuration;
+        }
+
+        public bool TryPlayHide(Action onComplete, out float duration)
+        {
+            duration = BeginHide();
+            UIAnimationPresetSO.TransitionPhase phase = preset.Hide;
+            if (!CanUseDotween(phase))
+            {
+                return false;
+            }
+
+            StopPlayback();
+            return TryBuildTransitionSequence(phase, isShow: false, onComplete);
         }
 
         public void ApplyHide(float elapsedTime)
@@ -127,6 +157,184 @@ namespace HP.Framework.UI
             {
                 contentCanvasGroup.alpha = shownContentAlpha;
             }
+        }
+
+        public void StopPlayback()
+        {
+            if (activeTween == null)
+            {
+                return;
+            }
+
+            DotweenBridge.TryKill(activeTween);
+            activeTween = null;
+        }
+
+        private bool TryBuildTransitionSequence(
+            UIAnimationPresetSO.TransitionPhase phase,
+            bool isShow,
+            Action onComplete)
+        {
+            if (!DotweenBridge.TryCreateSequence(out object sequence))
+            {
+                return false;
+            }
+
+            bool hasTrackTween = false;
+            if (phase.BackdropFade.Enabled)
+            {
+                if (!TryAddFadeTrack(
+                    sequence,
+                    backdropCanvasGroup,
+                    isShow ? shownBackdropAlpha : 0f,
+                    phase.BackdropFade.Timing))
+                {
+                    DotweenBridge.TryKill(sequence);
+                    return false;
+                }
+
+                hasTrackTween = true;
+            }
+
+            if (phase.ContentScale.Enabled)
+            {
+                Vector3 endScale = isShow
+                    ? shownContentScale
+                    : shownContentScale * phase.ContentScale.Scale;
+                if (!TryAddScaleTrack(
+                    sequence,
+                    contentRoot,
+                    endScale,
+                    phase.ContentScale.Timing))
+                {
+                    DotweenBridge.TryKill(sequence);
+                    return false;
+                }
+
+                hasTrackTween = true;
+            }
+
+            if (phase.ContentFade.Enabled)
+            {
+                if (!TryAddFadeTrack(
+                    sequence,
+                    contentCanvasGroup,
+                    isShow ? shownContentAlpha : 0f,
+                    phase.ContentFade.Timing))
+                {
+                    DotweenBridge.TryKill(sequence);
+                    return false;
+                }
+
+                hasTrackTween = true;
+            }
+
+            if (!hasTrackTween)
+            {
+                DotweenBridge.TryKill(sequence);
+                return false;
+            }
+
+            if (!DotweenBridge.TrySetUpdateIndependent(sequence))
+            {
+                DotweenBridge.TryKill(sequence);
+                return false;
+            }
+
+            Action completion = () =>
+            {
+                activeTween = null;
+                onComplete?.Invoke();
+            };
+
+            if (!DotweenBridge.TryOnComplete(sequence, completion))
+            {
+                DotweenBridge.TryKill(sequence);
+                return false;
+            }
+
+            activeTween = sequence;
+            return true;
+        }
+
+        private bool TryAddFadeTrack(
+            object sequence,
+            CanvasGroup target,
+            float endValue,
+            UIAnimationPresetSO.Timing timing)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            if (!DotweenBridge.TryCreateFadeTween(
+                target,
+                endValue,
+                timing.Duration,
+                out object tween))
+            {
+                return false;
+            }
+
+            if (!DotweenBridge.TrySetEase(tween, timing))
+            {
+                return false;
+            }
+
+            return DotweenBridge.TryInsert(sequence, timing.Delay, tween);
+        }
+
+        private bool TryAddScaleTrack(
+            object sequence,
+            RectTransform target,
+            Vector3 endValue,
+            UIAnimationPresetSO.Timing timing)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            if (!DotweenBridge.TryCreateScaleTween(
+                target,
+                endValue,
+                timing.Duration,
+                out object tween))
+            {
+                return false;
+            }
+
+            if (!DotweenBridge.TrySetEase(tween, timing))
+            {
+                return false;
+            }
+
+            return DotweenBridge.TryInsert(sequence, timing.Delay, tween);
+        }
+
+        private static bool CanUseDotween(UIAnimationPresetSO.TransitionPhase phase)
+        {
+            if (!DotweenBridge.IsAvailable || phase == null || phase.TotalDuration <= 0f)
+            {
+                return false;
+            }
+
+            return IsTweenableTrack(phase.BackdropFade.Enabled, phase.BackdropFade.Timing)
+                && IsTweenableTrack(phase.ContentScale.Enabled, phase.ContentScale.Timing)
+                && IsTweenableTrack(phase.ContentFade.Enabled, phase.ContentFade.Timing);
+        }
+
+        private static bool IsTweenableTrack(
+            bool enabled,
+            UIAnimationPresetSO.Timing timing)
+        {
+            if (!enabled)
+            {
+                return true;
+            }
+
+            return timing != null && timing.Duration > 0f;
         }
 
         private void ApplyShowStartState(UIAnimationPresetSO.TransitionPhase phase)
@@ -196,5 +404,3 @@ namespace HP.Framework.UI
         }
     }
 }
-
-

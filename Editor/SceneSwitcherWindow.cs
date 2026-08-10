@@ -7,8 +7,8 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 
 /// <summary>
-/// Editor Window hiá»ƒn thá»‹ danh sÃ¡ch scene Ä‘á»ƒ má»Ÿ nhanh.
-/// TÃ­ch chá»n "Build Settings Only" hoáº·c hiá»‡n táº¥t cáº£ scene trong project.
+/// Lists project scenes for quick opening from the Editor.
+/// Can show only Build Settings scenes or every scene asset in the project.
 /// Menu: Tools > Scene Switcher (Ctrl+Shift+S)
 /// </summary>
 public class SceneSwitcherWindow : EditorWindow
@@ -18,6 +18,8 @@ public class SceneSwitcherWindow : EditorWindow
     private string _searchFilter = "";
     private List<SceneEntry> _cachedScenes = new List<SceneEntry>();
     private bool _needsRefresh = true;
+    private GUIStyle _highlightStyle;
+    private Texture2D _highlightTexture;
 
     private class SceneEntry
     {
@@ -44,6 +46,12 @@ public class SceneSwitcherWindow : EditorWindow
     private void OnDisable()
     {
         EditorBuildSettings.sceneListChanged -= OnSceneListChanged;
+        if (_highlightTexture != null)
+        {
+            DestroyImmediate(_highlightTexture);
+            _highlightTexture = null;
+            _highlightStyle = null;
+        }
     }
 
     private void OnSceneListChanged()
@@ -72,7 +80,7 @@ public class SceneSwitcherWindow : EditorWindow
             });
         }
 
-        // All scenes in project (náº¿u cáº§n)
+        // Include scene assets outside Build Settings when requested.
         if (!_buildSettingsOnly)
         {
             var allSceneGuids = AssetDatabase.FindAssets("t:Scene");
@@ -120,7 +128,7 @@ public class SceneSwitcherWindow : EditorWindow
         }
 
         // Clear search button
-        if (GUILayout.Button("âœ•", EditorStyles.toolbarButton, GUILayout.Width(22)))
+        if (GUILayout.Button("x", EditorStyles.toolbarButton, GUILayout.Width(22)))
         {
             _searchFilter = "";
             GUI.FocusControl(null);
@@ -138,7 +146,7 @@ public class SceneSwitcherWindow : EditorWindow
         }
 
         // Refresh button
-        if (GUILayout.Button("â†»", EditorStyles.toolbarButton, GUILayout.Width(25)))
+        if (GUILayout.Button("R", EditorStyles.toolbarButton, GUILayout.Width(25)))
         {
             _needsRefresh = true;
         }
@@ -161,8 +169,8 @@ public class SceneSwitcherWindow : EditorWindow
         {
             EditorGUILayout.HelpBox(
                 _buildSettingsOnly
-                    ? "KhÃ´ng cÃ³ scene nÃ o trong Build Settings."
-                    : "KhÃ´ng tÃ¬m tháº¥y scene nÃ o.",
+                    ? "There are no scenes in Build Settings."
+                    : "No scene assets match the current filter.",
                 MessageType.Info);
 
             EditorGUILayout.EndScrollView();
@@ -177,7 +185,7 @@ public class SceneSwitcherWindow : EditorWindow
                 ? CreateHighlightStyle()
                 : EditorStyles.helpBox);
 
-            // Checkbox: toggle enabled/disabled trong Build Settings
+            // Toggle whether a Build Settings scene is enabled.
             if (scene.inBuildSettings)
             {
                 var newEnabled = GUILayout.Toggle(scene.enabled, GUIContent.none, GUILayout.Width(18));
@@ -189,7 +197,7 @@ public class SceneSwitcherWindow : EditorWindow
             }
             else
             {
-                GUILayout.Space(22); // Align vá»›i checkbox
+                GUILayout.Space(22); // Align with the Build Settings toggle.
             }
 
             // Icon
@@ -200,7 +208,7 @@ public class SceneSwitcherWindow : EditorWindow
             var statusLabel = "";
             if (isCurrent)
             {
-                statusLabel = " â–¶";
+                statusLabel = " >";
             }
             else if (scene.inBuildSettings && !scene.enabled)
             {
@@ -308,14 +316,22 @@ public class SceneSwitcherWindow : EditorWindow
 
     private GUIStyle CreateHighlightStyle()
     {
-        var style = new GUIStyle(EditorStyles.helpBox);
-        var tex = new Texture2D(1, 1);
-        tex.SetPixel(0, 0, new Color(0.2f, 0.4f, 0.2f, 0.3f));
-        tex.Apply();
-        style.normal.background = tex;
-        return style;
+        if (_highlightStyle != null)
+        {
+            return _highlightStyle;
+        }
+
+        _highlightTexture = new Texture2D(1, 1)
+        {
+            hideFlags = HideFlags.HideAndDontSave
+        };
+        _highlightTexture.SetPixel(0, 0, new Color(0.2f, 0.4f, 0.2f, 0.3f));
+        _highlightTexture.Apply();
+
+        _highlightStyle = new GUIStyle(EditorStyles.helpBox);
+        _highlightStyle.normal.background = _highlightTexture;
+        return _highlightStyle;
     }
 }
 #endif
-
 

@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -19,6 +19,7 @@ namespace HP.Framework.UI
 
         private Vector3 originalScale;
         private Coroutine scaleRoutine;
+        private object scaleTween;
         private bool isPressed;
         private bool isInitialized;
         private Button attachedButton;
@@ -134,7 +135,52 @@ namespace HP.Framework.UI
                 return;
             }
 
+            if (TryPlayDotweenScale(targetScale, curve))
+            {
+                return;
+            }
+
             scaleRoutine = StartCoroutine(ScaleRoutine(targetScale, curve));
+        }
+
+        private bool TryPlayDotweenScale(Vector3 targetScale, AnimationCurve curve)
+        {
+            if (!DotweenBridge.IsAvailable)
+            {
+                return false;
+            }
+
+            if (!DotweenBridge.TryCreateScaleTween(transform, targetScale, duration, out object tween))
+            {
+                return false;
+            }
+
+            AnimationCurve easeCurve = curve ?? AnimationCurve.Linear(0f, 0f, 1f, 1f);
+            if (!DotweenBridge.TrySetEase(tween, easeCurve))
+            {
+                DotweenBridge.TryKill(tween);
+                return false;
+            }
+
+            if (!DotweenBridge.TrySetUpdateIndependent(tween))
+            {
+                DotweenBridge.TryKill(tween);
+                return false;
+            }
+
+            if (!DotweenBridge.TryOnComplete(tween, ClearScaleTween))
+            {
+                DotweenBridge.TryKill(tween);
+                return false;
+            }
+
+            scaleTween = tween;
+            return true;
+        }
+
+        private void ClearScaleTween()
+        {
+            scaleTween = null;
         }
 
         private IEnumerator ScaleRoutine(Vector3 targetScale, AnimationCurve curve)
@@ -156,6 +202,12 @@ namespace HP.Framework.UI
 
         private void StopScaleRoutine()
         {
+            if (scaleTween != null)
+            {
+                DotweenBridge.TryKill(scaleTween);
+                scaleTween = null;
+            }
+
             if (scaleRoutine == null)
             {
                 return;
@@ -166,5 +218,3 @@ namespace HP.Framework.UI
         }
     }
 }
-
-

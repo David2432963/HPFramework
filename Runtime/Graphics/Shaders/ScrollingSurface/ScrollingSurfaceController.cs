@@ -3,9 +3,9 @@ using UnityEngine;
 namespace HP.Framework.Graphics
 {
     /// <summary>
-    /// Điều khiển thông số của shader ScrollingSurfaceURP bằng
-    /// MaterialPropertyBlock để tránh tạo material instance riêng.
-    /// Hỗ trợ GPU Instancing nếu shader có bật Multi Compile Instancing.
+    /// Controls ScrollingSurfaceURP shader properties through a
+    /// MaterialPropertyBlock to avoid creating material instances.
+    /// Supports GPU instancing when the shader enables its instancing variant.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Renderer))]
@@ -20,13 +20,13 @@ namespace HP.Framework.Graphics
         [Header("Surface Settings")]
         [SerializeField] private Color baseColor = Color.white;
 
-        [Tooltip("Số lần texture lặp theo trục X và Y.")]
+        [Tooltip("Texture repetitions along the X and Y axes.")]
         [SerializeField] private Vector2 tiling = new Vector2(4f, 4f);
 
-        [Tooltip("Tốc độ và hướng texture chạy theo UV.")]
+        [Tooltip("Texture scroll speed and direction in UV space.")]
         [SerializeField] private Vector2 scrollSpeed = new Vector2(0.1f, 0f);
 
-        [Tooltip("Offset bổ sung, không phụ thuộc thời gian.")]
+        [Tooltip("Additional offset independent of animation time.")]
         [SerializeField] private Vector2 manualOffset = Vector2.zero;
 
         [Header("Runtime")]
@@ -65,7 +65,7 @@ namespace HP.Framework.Graphics
 #endif
 
         /// <summary>
-        /// Áp dụng toàn bộ thông số hiện tại lên Renderer.
+        /// Applies the current surface properties to the renderer.
         /// </summary>
         public void ApplyProperties()
         {
