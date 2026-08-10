@@ -73,6 +73,8 @@ Editor preview and runtime both use `PopupTransitionPlayer`, so delays, duration
 
 Preview changes are temporary and are restored when the Inspector closes, scripts reload, Play Mode begins or Reset is pressed.
 
+If DOTween is installed and its setup utility has enabled the UI module, runtime playback uses the optional bridge for popup, toast and button scale motion. The bridge caches the reflected DOTween API once so the framework keeps no hard package dependency. When DOTween or its UI module is absent, the same UI components fall back to the built-in coroutine and easing path.
+
 ## EventSystem and optional Input System
 
 The reusable Bootstrap contains the EventSystem ownership point, while Setup/Reset configures the project-appropriate input module.
