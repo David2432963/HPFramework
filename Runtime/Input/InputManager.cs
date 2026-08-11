@@ -7,7 +7,8 @@
     using VContainer.Unity;
 
     /// <summary>
-    /// Shared Input System context controller. Only one action map is enabled at a time.
+    /// Shared Input System context controller. It owns one active framework action map at a time
+    /// without disabling unrelated maps in the same InputActionAsset.
     /// </summary>
     public sealed class InputManager : MonoBehaviour, IInitializable, IDisposable
     {
@@ -28,7 +29,6 @@
                 return;
             }
 
-            inputActions?.Disable();
             currentMapName = null;
             initialized = true;
 
@@ -54,7 +54,6 @@
             }
 
             DisableCurrentMap();
-            inputActions?.Disable();
             inputActions = asset;
             currentMapName = null;
 
@@ -147,7 +146,6 @@
         public void Dispose()
         {
             DisableCurrentMap();
-            inputActions?.Disable();
             initialized = false;
         }
     }
