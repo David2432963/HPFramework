@@ -1,8 +1,8 @@
 # Lifetime scopes
 
-Use `RootLifetimeScope` once as the VContainer project root. HP Framework Setup registers the generated Bootstrap through `VContainerSettings` in Preloaded Assets.
+Use `RootLifetimeScope` on the HP Framework `Bootstrap` prefab when that prefab is explicitly placed in a scene. In this project, `VContainerSettings` remains a preloaded settings asset but its `RootLifetimeScope` reference must stay `None`, so VContainer does not auto-instantiate Bootstrap.
 
-Use `BaseSceneLifetimeScope` for menu/gameplay scenes and `BaseFeatureLifetimeScope` for shorter-lived feature graphs.
+A scene only gets HP Framework services when the Bootstrap prefab is present in that scene. Use `BaseSceneLifetimeScope` and `BaseFeatureLifetimeScope` only when a concrete scene/feature design actually needs child scopes.
 
 ```text
 RootLifetimeScope
