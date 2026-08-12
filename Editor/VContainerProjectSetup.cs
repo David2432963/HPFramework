@@ -17,7 +17,7 @@ namespace HP.Framework.Editor
     {
         public static string SettingsPath => HPFrameworkProjectPaths.VContainerSettingsPath;
 
-        [MenuItem("Tools/HP Framework/VContainer/Setup Project Root", false, 10)]
+        [MenuItem("Tools/HP Framework/VContainer/Setup Manual Bootstrap Mode", false, 10)]
         public static void SetupProjectRoot()
         {
             RootLifetimeScope rootScope = FindBootstrapRootScope()
@@ -40,7 +40,9 @@ namespace HP.Framework.Editor
             }
 
             VContainerSettings settings = FindOrCreateSettings(rootScope, out bool createdSettings);
-            settings.RootLifetimeScope = rootScope;
+            // HP Framework uses a manual scene-owned Bootstrap. Keeping this null disables
+            // VContainerSettings automatic root prefab instantiation.
+            settings.RootLifetimeScope = null;
             // Diagnostics are opt-in for newly created settings, but Repair must preserve a
             // project's explicit diagnostics choice on an existing VContainerSettings asset.
             if (createdSettings)
@@ -59,8 +61,8 @@ namespace HP.Framework.Editor
             VContainerSettings.LoadInstanceFromPreloadAssets();
 
             Debug.Log(
-                $"[HP Framework/VContainer] Project root configured: {AssetDatabase.GetAssetPath(rootScope)} " +
-                $"via {SettingsPath}.");
+                $"[HP Framework/VContainer] Manual Bootstrap configured: {AssetDatabase.GetAssetPath(rootScope)}. " +
+                $"VContainerSettings will not auto-instantiate it; add the Bootstrap prefab to each scene that needs HP Framework.");
             return settings;
         }
 
@@ -86,17 +88,18 @@ namespace HP.Framework.Editor
             }
 
             VContainerSettings settings = preloadedSettings.FirstOrDefault();
-            if (settings == null || settings.RootLifetimeScope == null)
+            if (settings == null)
             {
                 valid = false;
                 Debug.LogError(
-                    "[HP Framework/VContainer] VContainerSettings has no RootLifetimeScope prefab assigned.");
+                    "[HP Framework/VContainer] Preloaded VContainerSettings is missing.");
             }
-            else if (!(settings.RootLifetimeScope is RootLifetimeScope))
+            else if (settings.RootLifetimeScope != null)
             {
                 valid = false;
                 Debug.LogError(
-                    "[HP Framework/VContainer] Project root must derive from HP.Framework.Bootstrap.RootLifetimeScope.");
+                    "[HP Framework/VContainer] Automatic RootLifetimeScope spawning is disabled for this project. " +
+                    "Clear VContainerSettings.RootLifetimeScope and place the HP Bootstrap prefab explicitly in scenes that need it.");
             }
 
             ValidateSceneRootDuplicates(settings);
@@ -105,7 +108,7 @@ namespace HP.Framework.Editor
             if (valid && logSuccess)
             {
                 Debug.Log(
-                    "[HP Framework/VContainer] Project setup is valid. Root scope and preload settings are configured.");
+                    "[HP Framework/VContainer] Project setup is valid for manual scene-owned Bootstrap mode.");
             }
 
             return valid;

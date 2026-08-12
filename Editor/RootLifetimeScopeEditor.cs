@@ -56,7 +56,7 @@ namespace HP.Framework.Editor
 
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField("VContainer Project Root", EditorStyles.boldLabel);
-            if (GUILayout.Button("Configure VContainerSettings", GUILayout.Height(26f)))
+            if (GUILayout.Button("Configure Manual Bootstrap Mode", GUILayout.Height(26f)))
             {
                 if (EditorUtility.IsPersistent(scope))
                 {
