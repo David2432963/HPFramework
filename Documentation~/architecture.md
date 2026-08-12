@@ -8,7 +8,7 @@ RootLifetimeScope                  application lifetime
     └── BaseFeatureLifetimeScope   short feature lifetime
 ```
 
-The root registers application-wide settings/assets/procedures, a root `IEventBus`, and persistent managers. Scene and feature scopes inherit parent registrations but own and dispose their own state.
+The root registers application-wide settings/assets/procedures, a root `IEventBus`, and persistent managers. In manual Bootstrap mode the root is placed in the entry scene and moves to `DontDestroyOnLoad`; `GameSceneManager` supplies that root as the VContainer parent while target scenes load. Scene and feature scopes inherit parent registrations but own and dispose their own state.
 
 ## Bootstrap as composition root
 

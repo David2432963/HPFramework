@@ -16,6 +16,7 @@ namespace HP.Framework.Bootstrap
     /// Root composition root. Runtime dependencies are explicit and the core package does not
     /// require Odin, DOTween, URP or Addressables.
     /// </summary>
+    [DefaultExecutionOrder(-6000)]
     public class RootLifetimeScope : LifetimeScope
     {
         [Header("Runtime Managers")]
@@ -31,8 +32,15 @@ namespace HP.Framework.Bootstrap
         [SerializeField] private AudioLibrarySO audioLibrary;
         [SerializeField] private UICatalogSO uiCatalog;
 
+        protected override void Awake()
+        {
+            DontDestroyOnLoad(gameObject);
+            base.Awake();
+        }
+
         protected override void Configure(IContainerBuilder builder)
         {
+            builder.RegisterInstance(this).As<RootLifetimeScope>();
             builder.RegisterEntryPointExceptionHandler(exception =>
             {
                 BaseLog.LogError(

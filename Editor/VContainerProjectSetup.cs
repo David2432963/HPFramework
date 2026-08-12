@@ -62,7 +62,8 @@ namespace HP.Framework.Editor
 
             Debug.Log(
                 $"[HP Framework/VContainer] Manual Bootstrap configured: {AssetDatabase.GetAssetPath(rootScope)}. " +
-                $"VContainerSettings will not auto-instantiate it; add the Bootstrap prefab to each scene that needs HP Framework.");
+                "VContainerSettings will not auto-instantiate it; place the Bootstrap prefab in the application entry scene. " +
+                "The root persists across scene loads and GameSceneManager parents loaded scene scopes to it.");
             return settings;
         }
 
@@ -108,7 +109,7 @@ namespace HP.Framework.Editor
             if (valid && logSuccess)
             {
                 Debug.Log(
-                    "[HP Framework/VContainer] Project setup is valid for manual scene-owned Bootstrap mode.");
+                    "[HP Framework/VContainer] Project setup is valid for manual persistent Bootstrap mode.");
             }
 
             return valid;
@@ -122,11 +123,6 @@ namespace HP.Framework.Editor
 
         private static void ValidateSceneRootDuplicates(VContainerSettings settings)
         {
-            if (settings == null || settings.RootLifetimeScope == null)
-            {
-                return;
-            }
-
             RootLifetimeScope[] sceneRoots = Resources.FindObjectsOfTypeAll<RootLifetimeScope>()
                 .Where(scope => scope != null
                     && !EditorUtility.IsPersistent(scope)
@@ -134,12 +130,20 @@ namespace HP.Framework.Editor
                     && scope.gameObject.scene.isLoaded)
                 .ToArray();
 
-            if (sceneRoots.Length > 0)
+            if (settings != null && settings.RootLifetimeScope != null && sceneRoots.Length > 0)
             {
                 Debug.LogWarning(
                     "[HP Framework/VContainer] A project root is already configured through VContainerSettings, " +
                     "but one or more RootLifetimeScope objects also exist in loaded scenes. " +
                     "Prefer scene scopes there to avoid accidentally creating a second application scope.");
+                return;
+            }
+
+            if (settings != null && settings.RootLifetimeScope == null && sceneRoots.Length > 1)
+            {
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] Manual Bootstrap mode expects one application RootLifetimeScope, " +
+                    $"but {sceneRoots.Length} loaded scene roots were found. Keep Bootstrap only in the entry scene.");
             }
         }
 

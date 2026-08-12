@@ -51,9 +51,9 @@ namespace HP.Framework.Bootstrap
     }
 
     /// <summary>
-    /// Base scope for scene-owned dependencies. With VContainerSettings configured, a scene
-    /// scope automatically becomes a child of the project RootLifetimeScope unless another
-    /// parent is explicitly assigned.
+    /// Base scope for scene-owned dependencies. In manual persistent-Bootstrap mode, scenes
+    /// loaded through GameSceneManager receive the application root through VContainer's
+    /// parent override. Directly played development scenes should assign an explicit parent.
     /// </summary>
     public class BaseSceneLifetimeScope : BaseChildLifetimeScope
     {

@@ -32,6 +32,7 @@
 
         private readonly List<float> stutterPointsCache = new List<float>();
         private ProcedureManager procedureManager;
+        private RootLifetimeScope rootLifetimeScope;
         private bool isLoading;
         private string activeSceneName;
 
@@ -39,9 +40,12 @@
         public string CurrentSceneName => activeSceneName;
 
         [Inject]
-        public void Construct(ProcedureManager procedureManager)
+        public void Construct(
+            ProcedureManager procedureManager,
+            RootLifetimeScope rootLifetimeScope)
         {
             this.procedureManager = procedureManager;
+            this.rootLifetimeScope = rootLifetimeScope;
         }
 
         public void Initialize()
@@ -75,6 +79,7 @@
 
             isLoading = true;
             AsyncOperation targetOperation = null;
+            IDisposable parentOverride = null;
             SceneLoadStarted?.Invoke(sceneName);
 
             try
@@ -82,6 +87,7 @@
                 cancellationToken.ThrowIfCancellationRequested();
                 await TryLoadLoadingSceneAsync(sceneName, cancellationToken);
 
+                parentOverride = LifetimeScope.EnqueueParent(rootLifetimeScope);
                 targetOperation = SceneManager.LoadSceneAsync(sceneName, loadMode);
                 if (targetOperation == null)
                 {
@@ -138,6 +144,7 @@
             }
             finally
             {
+                parentOverride?.Dispose();
                 await UnloadLoadingSceneIfPresentAsync();
                 isLoading = false;
             }

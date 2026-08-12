@@ -215,7 +215,7 @@ $forbiddenPatterns = @(
     @{ Pattern = 'using\s+DG\.Tweening\s*;'; Message = 'hard DOTween dependency' },
     @{ Pattern = 'using\s+Sirenix\.'; Message = 'hard Odin/Sirenix dependency' },
     @{ Pattern = 'Resources\.UnloadUnusedAssets\s*\('; Message = 'unconditional global unload' },
-    @{ Pattern = 'DontDestroyOnLoad\s*\('; Message = 'hidden global lifetime' },
+    @{ Pattern = 'DontDestroyOnLoad\s*\('; Message = 'hidden global lifetime'; AllowedPaths = @('Runtime/Bootstrap/RootLifetimeScope.cs') },
     @{ Pattern = 'LifetimeScope\.Find\s*<'; Message = 'runtime LifetimeScope service locator' },
     @{ Pattern = '\.Container\.Resolve\s*<'; Message = 'runtime container service locator' },
     @{ Pattern = 'public\s+static\s+[^\r\n;=]+\s+Instance\s*[{=]'; Message = 'public static singleton Instance' },
@@ -226,8 +226,12 @@ foreach ($root in $sourceRoots) {
     if (-not (Test-Path $root)) { continue }
     Get-ChildItem $root -Recurse -Filter *.cs -File | ForEach-Object {
         $content = Get-Content $_.FullName -Raw
+        $relativePath = Relative $_.FullName
         foreach ($rule in $forbiddenPatterns) {
-            if ($content -match $rule.Pattern) { Add-Error "$($rule.Message): $(Relative $_.FullName)" }
+            if ($content -notmatch $rule.Pattern) { continue }
+
+            $allowed = $rule.ContainsKey('AllowedPaths') -and $rule.AllowedPaths -contains $relativePath
+            if (-not $allowed) { Add-Error "$($rule.Message): $relativePath" }
         }
     }
 }

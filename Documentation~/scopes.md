@@ -1,13 +1,14 @@
 # Lifetime scopes
 
-Use `RootLifetimeScope` on the HP Framework `Bootstrap` prefab when that prefab is explicitly placed in a scene. In this project, `VContainerSettings` remains a preloaded settings asset but its `RootLifetimeScope` reference must stay `None`, so VContainer does not auto-instantiate Bootstrap.
+Use `RootLifetimeScope` on the HP Framework `Bootstrap` prefab and place that prefab explicitly in the application entry scene. `RootLifetimeScope` moves the Bootstrap hierarchy to `DontDestroyOnLoad`, so the entry/loading scene can unload while application services remain alive. In this project, `VContainerSettings` remains a preloaded settings asset but its `RootLifetimeScope` reference must stay `None`, so VContainer does not auto-instantiate Bootstrap.
 
-A scene only gets HP Framework services when the Bootstrap prefab is present in that scene. Use `BaseSceneLifetimeScope` and `BaseFeatureLifetimeScope` only when a concrete scene/feature design actually needs child scopes.
+`GameSceneManager` loads target scenes while `LifetimeScope.EnqueueParent(rootLifetimeScope)` is active. A `BaseSceneLifetimeScope` in the target scene therefore builds as a child of the persistent application root and can inject root UI/audio/pool/settings services. A scene played directly in development should assign an explicit root parent; do not use hierarchy searches or static root access.
 
 ```text
-RootLifetimeScope
-└── BaseSceneLifetimeScope
-    └── BaseFeatureLifetimeScope
+Entry scene
+└── RootLifetimeScope (DontDestroyOnLoad)
+    └── BaseSceneLifetimeScope (loaded target scene)
+        └── BaseFeatureLifetimeScope
 ```
 
 Child scopes inherit parent registrations and dispose registrations owned by their own container when destroyed.
