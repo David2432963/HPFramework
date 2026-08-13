@@ -4,10 +4,12 @@ using System.Reflection;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
+using UnityEngine.UI;
 using VContainer;
 using HP.Framework.Assets;
 using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
+using HP.Framework.Bootstrap.Loading;
 using HP.Framework.Common;
 using HP.Framework.Haptics;
 using HP.Framework.Input;
@@ -109,6 +111,89 @@ namespace HP.Framework.Tests
 
     public sealed class BootstrapPlayModeTests
     {
+        [Test]
+        public void SceneLoadStartedException_ReportsFailureAndResetsLoadingState()
+        {
+            GameObject managerObject = new GameObject("SceneLoadLifecycleTest");
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                bool failureReported = false;
+                sceneManager.SceneLoadStarted += _ =>
+                    throw new InvalidOperationException("SceneLoadStarted test failure.");
+                sceneManager.SceneLoadFailed += (_, exception) =>
+                    failureReported = exception is InvalidOperationException;
+
+                Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                    await sceneManager.LoadSceneAsync(BaseConstants.DefaultLoadingSceneName));
+
+                Assert.That(failureReported, Is.True);
+                Assert.That(sceneManager.IsLoading, Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(managerObject);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator LoadingScreen_InitializesUpdatesAndUnsubscribes()
+        {
+            GameObject managerObject = new GameObject("LoadingScreenManagerTest");
+            GameObject screenObject = new GameObject("LoadingScreenTest");
+            GameObject sliderObject = new GameObject(
+                "ProgressBar",
+                typeof(RectTransform),
+                typeof(Slider));
+            GameObject textObject = new GameObject(
+                "ProgressText",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Text));
+
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                LoadingScreen loadingScreen = screenObject.AddComponent<LoadingScreen>();
+                Slider slider = sliderObject.GetComponent<Slider>();
+                Text text = textObject.GetComponent<Text>();
+                SetField(loadingScreen, "progressBar", slider);
+                SetField(loadingScreen, "progressText", text);
+
+                slider.value = 0.75f;
+                text.text = "75%";
+                loadingScreen.Construct(sceneManager);
+
+                Assert.That(slider.value, Is.Zero);
+                Assert.That(text.text, Is.EqualTo("0%"));
+
+                FieldInfo progressEvent = typeof(GameSceneManager).GetField(
+                    "LoadProgressChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(progressEvent, Is.Not.Null);
+                Action<float> progressChanged = progressEvent.GetValue(sceneManager) as Action<float>;
+                Assert.That(progressChanged, Is.Not.Null);
+
+                progressChanged.Invoke(0.42f);
+                Assert.That(slider.value, Is.EqualTo(0.42f).Within(0.0001f));
+                Assert.That(text.text, Is.EqualTo("42%"));
+
+                UnityEngine.Object.Destroy(screenObject);
+                yield return null;
+                Assert.That(progressEvent.GetValue(sceneManager), Is.Null);
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(managerObject);
+                UnityEngine.Object.Destroy(screenObject);
+                UnityEngine.Object.Destroy(sliderObject);
+                UnityEngine.Object.Destroy(textObject);
+            }
+
+            yield return null;
+        }
+
         [UnityTest]
         public IEnumerator UIManager_ClearOwnedViews_DisablesThenDestroysRegisteredInstances()
         {
@@ -478,5 +563,3 @@ namespace HP.Framework.Tests
         }
     }
 }
-
-

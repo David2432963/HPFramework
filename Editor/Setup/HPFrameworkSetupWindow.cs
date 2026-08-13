@@ -41,6 +41,16 @@ namespace HP.Framework.Editor
             DrawStatus("VContainer preloaded asset", preloadedSettings.Length == 1);
             DrawStatus("Package Bootstrap template",
                 !string.IsNullOrWhiteSpace(HPFrameworkProjectPaths.BootstrapTemplatePath));
+            string loadingScenePath = HPFrameworkProjectPaths.LoadingScenePath;
+            DrawStatus("Framework LoadingScene",
+                string.Equals(
+                    loadingScenePath,
+                    HPFrameworkProjectPaths.LoadingSceneAssetPath,
+                    StringComparison.Ordinal)
+                && AssetDatabase.LoadAssetAtPath<SceneAsset>(loadingScenePath) != null);
+            DrawStatus("LoadingScene in Build Settings",
+                EditorBuildSettings.scenes.Any(scene =>
+                    scene.path == loadingScenePath && scene.enabled));
             bool inputSystemAvailable = Type.GetType(
                 "UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem",
                 throwOnError: false) != null;

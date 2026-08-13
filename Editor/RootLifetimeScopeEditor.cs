@@ -395,15 +395,7 @@ namespace HP.Framework.Editor
                 added = true;
             }
 
-            string loadingScenePath = AssetDatabase.FindAssets("t:Scene LoadingScene")
-                .Select(AssetDatabase.GUIDToAssetPath)
-                .FirstOrDefault();
-            if (!string.IsNullOrEmpty(loadingScenePath)
-                && !scenes.Any(scene => scene.path == loadingScenePath))
-            {
-                scenes.Add(new EditorBuildSettingsScene(loadingScenePath, true));
-                added = true;
-            }
+            added |= EnsureLoadingSceneInBuildSettings(scenes);
 
             if (added)
             {
@@ -414,6 +406,46 @@ namespace HP.Framework.Editor
             {
                 Debug.Log("[HP Framework/VContainer] Build Settings already contain the required scenes.");
             }
+        }
+
+        public static bool EnsureLoadingSceneInBuildSettings()
+        {
+            var scenes = EditorBuildSettings.scenes.ToList();
+            bool changed = EnsureLoadingSceneInBuildSettings(scenes);
+            if (changed)
+            {
+                EditorBuildSettings.scenes = scenes.ToArray();
+            }
+
+            return changed;
+        }
+
+        private static bool EnsureLoadingSceneInBuildSettings(
+            System.Collections.Generic.List<EditorBuildSettingsScene> scenes)
+        {
+            string loadingScenePath = HPFrameworkProjectPaths.LoadingScenePath;
+            if (string.IsNullOrWhiteSpace(loadingScenePath))
+            {
+                Debug.LogError(
+                    "[HP Framework/VContainer] The framework LoadingScene asset is missing. " +
+                    "Restore the HPFramework package before running Setup.");
+                return false;
+            }
+
+            int sceneIndex = scenes.FindIndex(scene => scene.path == loadingScenePath);
+            if (sceneIndex < 0)
+            {
+                scenes.Add(new EditorBuildSettingsScene(loadingScenePath, true));
+                return true;
+            }
+
+            if (scenes[sceneIndex].enabled)
+            {
+                return false;
+            }
+
+            scenes[sceneIndex].enabled = true;
+            return true;
         }
 
         private static T GetOrAddComponent<T>(GameObject gameObject) where T : Component
@@ -815,6 +847,5 @@ namespace HP.Framework.Editor
     }
 }
 #endif
-
 
 

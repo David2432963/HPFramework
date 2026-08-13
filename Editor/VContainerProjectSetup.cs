@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using HP.Framework;
 using HP.Framework.Bootstrap;
 using UnityEditor;
 using UnityEngine;
@@ -59,6 +60,7 @@ namespace HP.Framework.Editor
             EditorUtility.SetDirty(settings);
             AssetDatabase.SaveAssets();
             VContainerSettings.LoadInstanceFromPreloadAssets();
+            RootLifetimeScopeEditor.EnsureLoadingSceneInBuildSettings();
 
             Debug.Log(
                 $"[HP Framework/VContainer] Manual Bootstrap configured: {AssetDatabase.GetAssetPath(rootScope)}. " +
@@ -103,6 +105,7 @@ namespace HP.Framework.Editor
                     "Clear VContainerSettings.RootLifetimeScope and place the HP Bootstrap prefab explicitly in scenes that need it.");
             }
 
+            valid = ValidateLoadingSceneSetup() && valid;
             ValidateSceneRootDuplicates(settings);
             ValidateFeatureParents();
 
@@ -110,6 +113,70 @@ namespace HP.Framework.Editor
             {
                 Debug.Log(
                     "[HP Framework/VContainer] Project setup is valid for manual persistent Bootstrap mode.");
+            }
+
+            return valid;
+        }
+
+        private static bool ValidateLoadingSceneSetup()
+        {
+            bool valid = true;
+            string loadingScenePath = HPFrameworkProjectPaths.LoadingScenePath;
+            if (!string.Equals(
+                    loadingScenePath,
+                    HPFrameworkProjectPaths.LoadingSceneAssetPath,
+                    StringComparison.Ordinal))
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] The framework LoadingScene GUID does not resolve to " +
+                    $"'{HPFrameworkProjectPaths.LoadingSceneAssetPath}'. Restore the package asset and its .meta file.");
+            }
+            else if (AssetDatabase.LoadAssetAtPath<SceneAsset>(loadingScenePath) == null)
+            {
+                valid = false;
+                Debug.LogError(
+                    $"[HP Framework/VContainer] LoadingScene is missing at '{loadingScenePath}'.");
+            }
+
+            EditorBuildSettingsScene loadingBuildScene = EditorBuildSettings.scenes
+                .FirstOrDefault(scene => scene.path == loadingScenePath);
+            if (loadingBuildScene == null || !loadingBuildScene.enabled)
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] LoadingScene must be present and enabled in Build Settings. " +
+                    "Run Tools/HP Framework/Setup to repair it.");
+            }
+
+            string bootstrapPath = AssetDatabase.LoadAssetAtPath<GameObject>(
+                    HPFrameworkProjectPaths.BootstrapPath) != null
+                ? HPFrameworkProjectPaths.BootstrapPath
+                : HPFrameworkProjectPaths.BootstrapTemplatePath;
+            GameObject bootstrap = AssetDatabase.LoadAssetAtPath<GameObject>(bootstrapPath);
+            GameSceneManager sceneManager = bootstrap != null
+                ? bootstrap.GetComponentInChildren<GameSceneManager>(true)
+                : null;
+            if (sceneManager == null)
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] Bootstrap does not contain GameSceneManager. Run Setup to repair it.");
+            }
+            else
+            {
+                SerializedObject sceneManagerObject = new SerializedObject(sceneManager);
+                string configuredName = sceneManagerObject.FindProperty("loadingSceneName")?.stringValue;
+                if (!string.Equals(
+                        configuredName,
+                        BaseConstants.DefaultLoadingSceneName,
+                        StringComparison.Ordinal))
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap GameSceneManager must use " +
+                        $"'{BaseConstants.DefaultLoadingSceneName}' as its default loading scene.");
+                }
             }
 
             return valid;
@@ -329,5 +396,4 @@ namespace HP.Framework.Editor
     }
 }
 #endif
-
 

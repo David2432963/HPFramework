@@ -20,6 +20,17 @@ Tools > HP Framework > Setup
 
 Run **Setup / Repair Missing References**, then **Validate Project**.
 
+Setup adds and enables the framework-owned loading scene in Build Settings. Its default UGUI
+layout can be customized at:
+
+```text
+Assets/Plugins/HPFramework/Runtime/Bootstrap/Loading/Scenes/LoadingScene.unity
+```
+
+Keep the scene named `LoadingScene`. An empty `GameSceneManager.loadingSceneName` explicitly
+disables loading-scene presentation; any configured name must resolve to an enabled Build
+Settings scene.
+
 Setup creates or repairs the local Bootstrap and default settings under:
 
 ```text

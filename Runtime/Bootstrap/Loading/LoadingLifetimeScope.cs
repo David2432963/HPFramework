@@ -3,7 +3,7 @@ using UnityEngine;
 using VContainer;
 using VContainer.Unity;
 
-namespace HP.Framework.UI
+namespace HP.Framework.Bootstrap.Loading
 {
     /// <summary>
     /// LifetimeScope for LoadingScene. Auto-child of RootLifetimeScope.
@@ -22,5 +22,4 @@ namespace HP.Framework.UI
         }
     }
 }
-
 

@@ -42,6 +42,11 @@ Assets/Plugins/HPFramework/
 3. Run **Validate Project**.
 4. Keep application/game code outside the framework repository, for example under `Assets/Game`.
 
+Setup also adds and enables the framework-owned `LoadingScene` in Build Settings. Customize
+its neutral UGUI presentation directly at
+`Runtime/Bootstrap/Loading/Scenes/LoadingScene.unity`; keep the scene name unchanged so the
+default `GameSceneManager` configuration can load it.
+
 Normal **Repair** is non-destructive: it fills missing objects/references while preserving existing manager ownership, camera settings, Canvas Scaler values, layout, catalogs, Input Actions and Toast assignments.
 
 Use **Reset Bootstrap To Framework Defaults** only when you intentionally want the canonical HP Framework hierarchy and defaults restored.

@@ -80,14 +80,14 @@
             isLoading = true;
             AsyncOperation targetOperation = null;
             IDisposable parentOverride = null;
-            SceneLoadStarted?.Invoke(sceneName);
 
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                SceneLoadStarted?.Invoke(sceneName);
+                parentOverride = LifetimeScope.EnqueueParent(rootLifetimeScope);
                 await TryLoadLoadingSceneAsync(sceneName, cancellationToken);
 
-                parentOverride = LifetimeScope.EnqueueParent(rootLifetimeScope);
                 targetOperation = SceneManager.LoadSceneAsync(sceneName, loadMode);
                 if (targetOperation == null)
                 {
@@ -100,7 +100,6 @@
 
                 targetOperation.allowSceneActivation = true;
                 await AwaitOperationAsync(targetOperation, CancellationToken.None);
-                cancellationToken.ThrowIfCancellationRequested();
 
                 Scene loadedScene = SceneManager.GetSceneByName(sceneName);
                 if (!loadedScene.IsValid() || !loadedScene.isLoaded)
@@ -144,9 +143,21 @@
             }
             finally
             {
-                parentOverride?.Dispose();
-                await UnloadLoadingSceneIfPresentAsync();
-                isLoading = false;
+                try
+                {
+                    await UnloadLoadingSceneIfPresentAsync();
+                }
+                finally
+                {
+                    try
+                    {
+                        parentOverride?.Dispose();
+                    }
+                    finally
+                    {
+                        isLoading = false;
+                    }
+                }
             }
         }
 
@@ -282,10 +293,16 @@
             CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(loadingSceneName)
-                || string.Equals(loadingSceneName, targetSceneName, StringComparison.OrdinalIgnoreCase)
-                || !Application.CanStreamedLevelBeLoaded(loadingSceneName))
+                || string.Equals(loadingSceneName, targetSceneName, StringComparison.OrdinalIgnoreCase))
             {
                 return;
+            }
+
+            if (!Application.CanStreamedLevelBeLoaded(loadingSceneName))
+            {
+                throw new InvalidOperationException(
+                    $"Loading scene '{loadingSceneName}' is not available. Add and enable it in Build Settings, " +
+                    $"or clear {nameof(loadingSceneName)} to disable the loading scene explicitly.");
             }
 
             Scene existingScene = SceneManager.GetSceneByName(loadingSceneName);
@@ -301,7 +318,8 @@
 
             if (operation == null)
             {
-                return;
+                throw new InvalidOperationException(
+                    $"Unity failed to create a load operation for loading scene '{loadingSceneName}'.");
             }
 
             // Once Unity starts loading an additive scene, complete the operation before honoring
@@ -431,5 +449,3 @@
 
 
 }
-
-

@@ -3,7 +3,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using VContainer;
 
-namespace HP.Framework.UI
+namespace HP.Framework.Bootstrap.Loading
 {
     /// <summary>
     /// Loading screen view component in LoadingScene.
@@ -21,19 +21,16 @@ namespace HP.Framework.UI
         public void Construct(GameSceneManager gameSceneManager)
         {
             this.gameSceneManager = gameSceneManager;
+            this.gameSceneManager.LoadProgressChanged += OnProgressChanged;
+            SetProgress(0f);
         }
 
         private void OnEnable()
         {
-            if (gameSceneManager != null)
-            {
-                gameSceneManager.LoadProgressChanged += OnProgressChanged;
-            }
-            if (progressBar != null) progressBar.value = 0f;
-            if (progressText != null) progressText.text = "0%";
+            SetProgress(0f);
         }
 
-        private void OnDisable()
+        private void OnDestroy()
         {
             if (gameSceneManager != null)
             {
@@ -43,11 +40,21 @@ namespace HP.Framework.UI
 
         private void OnProgressChanged(float progress)
         {
-            if (progressBar != null) progressBar.value = progress;
-            if (progressText != null) progressText.text = $"{(progress * 100f):F0}%";
-            BaseLog.Log($"[LoadingScreen] OnProgressChanged: {progress}");
+            SetProgress(progress);
+        }
+
+        private void SetProgress(float progress)
+        {
+            float clampedProgress = Mathf.Clamp01(progress);
+            if (progressBar != null)
+            {
+                progressBar.value = clampedProgress;
+            }
+
+            if (progressText != null)
+            {
+                progressText.text = $"{clampedProgress * 100f:F0}%";
+            }
         }
     }
 }
-
-
