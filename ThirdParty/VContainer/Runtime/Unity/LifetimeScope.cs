@@ -303,7 +303,14 @@ namespace VContainer.Unity
                 }
             }
 
-            builder.RegisterInstance<LifetimeScope>(this).AsSelf();
+            // The root scope may register its concrete type in Configure. Registering the same
+            // instance again as LifetimeScope creates a duplicate singleton implementation in
+            // this VContainer fork. Child scopes still need the base registration for parent
+            // scope resolution.
+            if (Parent != null)
+            {
+                builder.RegisterInstance<LifetimeScope>(this).AsSelf();
+            }
             EntryPointsBuilder.EnsureDispatcherRegistered(builder);
         }
 
