@@ -76,6 +76,11 @@
 
         private void AttachUICameraToMainCamera()
         {
+            AttachUICameraTo(Camera.main);
+        }
+
+        public void AttachUICameraTo(Camera mainCamera)
+        {
             if (uiCamera == null)
             {
                 return;
@@ -83,7 +88,6 @@
 
             URPCameraStackUtility.ConfigureAsOverlay(uiCamera);
 
-            Camera mainCamera = Camera.main;
             if (mainCamera == null)
             {
                 return;
@@ -617,5 +621,4 @@
 
 
 }
-
 

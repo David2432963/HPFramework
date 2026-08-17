@@ -58,6 +58,8 @@ namespace HP.Framework.UI
         Transform ScreenRoot { get; }
         Transform PopupRoot { get; }
         Transform NotificationRoot { get; }
+
+        void AttachUICameraTo(Camera mainCamera);
     }
 
     /// <summary>
@@ -85,5 +87,4 @@ namespace HP.Framework.UI
             where T : BaseScreen;
     }
 }
-
 

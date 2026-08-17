@@ -10,6 +10,7 @@
                        "HP.Framework.Persistence",
                        "HP.Framework.Pooling",
                        "HP.Framework.UI",
+                       "HP.Framework.UI.TMP",
                        "VContainer",
                        "Unity.UGUI"
                    ],
