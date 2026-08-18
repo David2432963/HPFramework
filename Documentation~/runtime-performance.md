@@ -4,6 +4,14 @@ HP Framework favors explicit ownership and predictable hot paths. The framework 
 
 Use Unity Profiler data to decide when to replace convenience paths with the lower-level APIs documented here.
 
+## Animator playback ticking
+
+`AnimatorPlay` instances register with an internal framework tick registry only while a non-loop playback needs completion tracking or a completed playback is holding its final frame. Idle components and loop playback do not add per-object PlayerLoop work.
+
+One application-owned dispatcher implements VContainer's `ITickable` in `RootLifetimeScope` and updates the registry. Runtime playback therefore requires the HP Framework Bootstrap to be built before `Play`, `CrossFade` or `PlayOneShot` is called. Dynamically spawned prefabs can register after the container is built and do not need to resolve a `LifetimeScope`.
+
+Registration changes made from playback callbacks are deferred safely until the current dispatch ends. No per-frame collection snapshots are allocated after the registry collections have reached their required capacity.
+
 ## Pooling
 
 `PoolRuntime` caches each pooled instance's `IPoolable[]` metadata when the instance is first created/prewarmed.

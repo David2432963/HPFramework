@@ -16,7 +16,7 @@ namespace HP.Framework.Animations
 
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Animator))]
-    public sealed class AnimatorPlayback : MonoBehaviour
+    public sealed class AnimatorPlay : MonoBehaviour, IFrameworkTickable
     {
         [Header("Defaults")]
         [SerializeField, Min(0)] private int defaultLayer = 0;
@@ -39,18 +39,12 @@ namespace HP.Framework.Animations
         private int previousLayer;
         private float previousNormalizedTime;
         private bool hasPreviousState;
-
         #endregion
 
         public Animator Animator => animator;
         public string CurrentStateName => activeStateName;
 
         #region Unity Lifecycle
-
-        private void Reset()
-        {
-            animator = GetComponent<Animator>();
-        }
 
         private void Awake()
         {
@@ -60,10 +54,35 @@ namespace HP.Framework.Animations
             }
         }
 
-        private void Update()
+        private void OnEnable()
         {
-            if (animator == null || (!isPlaying && !holdingFinalFrame))
+            if (animator == null)
             {
+                animator = GetComponent<Animator>();
+            }
+        }
+
+        private void OnDisable()
+        {
+            ClearPlaybackState();
+        }
+
+        private void OnDestroy()
+        {
+            ClearPlaybackState();
+        }
+
+        void IFrameworkTickable.Tick()
+        {
+            if (this == null || animator == null)
+            {
+                FrameworkTickRegistry.Unregister(this);
+                return;
+            }
+
+            if (!isPlaying && !holdingFinalFrame)
+            {
+                FrameworkTickRegistry.Unregister(this);
                 return;
             }
 
@@ -74,7 +93,13 @@ namespace HP.Framework.Animations
             }
 
             AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(activeLayer);
-            if (activeLoop || animator.IsInTransition(activeLayer))
+            if (activeLoop)
+            {
+                FrameworkTickRegistry.Unregister(this);
+                return;
+            }
+
+            if (animator.IsInTransition(activeLayer))
             {
                 return;
             }
@@ -85,11 +110,6 @@ namespace HP.Framework.Animations
             }
 
             CompleteAnimation();
-        }
-
-        private void OnDisable()
-        {
-            ClearPlaybackState();
         }
 
         #endregion
@@ -207,6 +227,11 @@ namespace HP.Framework.Animations
             Action<string> onStarted,
             Action<string> onCompleted)
         {
+            if (animator == null)
+            {
+                animator = GetComponent<Animator>();
+            }
+
             if (animator == null
                 || string.IsNullOrWhiteSpace(stateName)
                 || !IsValidLayer(layer))
@@ -218,6 +243,15 @@ namespace HP.Framework.Animations
             int stateHash = Animator.StringToHash(fullStateName);
             if (!animator.HasState(layer, stateHash))
             {
+                return false;
+            }
+
+            if (Application.isPlaying && !FrameworkTickRegistry.HasActiveDriver)
+            {
+                Debug.LogError(
+                    $"[{nameof(AnimatorPlay)}] Playback requires an active " +
+                    "RootLifetimeScope tick driver.",
+                    this);
                 return false;
             }
 
@@ -257,6 +291,11 @@ namespace HP.Framework.Animations
             else
             {
                 animator.Play(stateHash, layer, normalizedTime);
+            }
+
+            if (Application.isPlaying && !loop)
+            {
+                FrameworkTickRegistry.Register(this);
             }
 
             startedCallback?.Invoke(activeStateName);
@@ -352,6 +391,7 @@ namespace HP.Framework.Animations
 
         private void ClearPlaybackState()
         {
+            FrameworkTickRegistry.Unregister(this);
             isPlaying = false;
             holdingFinalFrame = false;
             completionRaised = false;

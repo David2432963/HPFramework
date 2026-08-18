@@ -1,0 +1,23 @@
+{
+    "name": "HP.Framework.Tests.Runtime.Animations",
+    "rootNamespace": "HP.Framework.Tests.Runtime.Animations",
+    "references": [
+        "HP.Framework.Core",
+        "HP.Framework.Bootstrap",
+        "VContainer"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

@@ -47,6 +47,7 @@ namespace HP.Framework.Bootstrap
                     $"[VContainer Exception] {exception.Message}\n{exception.StackTrace}");
             });
             EntryPointsBuilder.EnsureDispatcherRegistered(builder);
+            builder.RegisterEntryPoint<FrameworkTickDispatcher>();
 
             RegisterSharedAssets(builder);
             RegisterCoreServices(builder);
@@ -199,5 +200,4 @@ namespace HP.Framework.Bootstrap
         }
     }
 }
-
 

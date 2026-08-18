@@ -5,25 +5,25 @@ using HP.Framework.Animations;
 
 namespace HP.Framework.Tests
 {
-    public sealed class AnimatorPlaybackTests
+    public sealed class AnimatorPlayTests
     {
         private GameObject animatorObject;
-        private AnimatorPlayback playback;
+        private AnimatorPlay playback;
 
         [SetUp]
         public void SetUp()
         {
-            animatorObject = new GameObject("AnimatorPlaybackTest");
+            animatorObject = new GameObject("AnimatorPlayTest");
             Animator animator = animatorObject.AddComponent<Animator>();
             AnimatorController controller = new AnimatorController
             {
-                name = "AnimatorPlaybackTestController"
+                name = "AnimatorPlayTestController"
             };
             controller.AddLayer("Base Layer");
             controller.layers[0].stateMachine.AddState("Idle");
             controller.layers[0].stateMachine.AddState("Inspect");
             animator.runtimeAnimatorController = controller;
-            playback = animatorObject.AddComponent<AnimatorPlayback>();
+            playback = animatorObject.AddComponent<AnimatorPlay>();
         }
 
         [TearDown]
