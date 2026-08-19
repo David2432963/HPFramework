@@ -28,6 +28,7 @@ namespace HP.Framework.Animations
         private string returnStateName;
         private Action<string> startedCallback;
         private Action<string> completedCallback;
+        private Action<string> markerCallback;
         private int activeStateHash;
         private int activeLayer;
         private bool activeLoop;
@@ -35,6 +36,8 @@ namespace HP.Framework.Animations
         private bool isPlaying;
         private bool holdingFinalFrame;
         private bool completionRaised;
+        private bool markerRaised;
+        private float markerNormalizedTime = -1f;
         private int previousStateHash;
         private int previousLayer;
         private float previousNormalizedTime;
@@ -106,7 +109,22 @@ namespace HP.Framework.Animations
 
             if (stateInfo.fullPathHash != activeStateHash || stateInfo.normalizedTime < 1f)
             {
+                if (!markerRaised && markerNormalizedTime >= 0f &&
+                    stateInfo.fullPathHash == activeStateHash &&
+                    stateInfo.normalizedTime >= markerNormalizedTime)
+                {
+                    markerRaised = true;
+                    markerCallback?.Invoke(activeStateName);
+                }
+
                 return;
+            }
+
+            if (!markerRaised && markerNormalizedTime >= 0f &&
+                stateInfo.normalizedTime >= markerNormalizedTime)
+            {
+                markerRaised = true;
+                markerCallback?.Invoke(activeStateName);
             }
 
             CompleteAnimation();
@@ -134,6 +152,8 @@ namespace HP.Framework.Animations
                 normalizedTime,
                 0f,
                 null,
+                -1f,
+                null,
                 interruptPolicy,
                 onStarted,
                 onCompleted);
@@ -158,6 +178,8 @@ namespace HP.Framework.Animations
                 normalizedTime,
                 Mathf.Max(0f, transitionDuration),
                 null,
+                -1f,
+                null,
                 interruptPolicy,
                 onStarted,
                 onCompleted);
@@ -181,6 +203,35 @@ namespace HP.Framework.Animations
                 0f,
                 Mathf.Max(0f, transitionDuration),
                 returnState,
+                -1f,
+                null,
+                interruptPolicy,
+                onStarted,
+                onCompleted);
+        }
+
+        public bool PlayOneShotWithMarker(
+            string stateName,
+            string returnState,
+            float markerNormalizedTime,
+            Action<string> onMarker,
+            int layer = 0,
+            float transitionDuration = 0.1f,
+            bool holdFinalFrame = false,
+            AnimatorInterruptPolicy interruptPolicy = AnimatorInterruptPolicy.Force,
+            Action<string> onStarted = null,
+            Action<string> onCompleted = null)
+        {
+            return StartPlayback(
+                stateName,
+                layer,
+                false,
+                holdFinalFrame,
+                0f,
+                Mathf.Max(0f, transitionDuration),
+                returnState,
+                Mathf.Clamp01(markerNormalizedTime),
+                onMarker,
                 interruptPolicy,
                 onStarted,
                 onCompleted);
@@ -223,6 +274,8 @@ namespace HP.Framework.Animations
             float normalizedTime,
             float transitionDuration,
             string nextStateName,
+            float playbackMarkerNormalizedTime,
+            Action<string> playbackMarkerCallback,
             AnimatorInterruptPolicy interruptPolicy,
             Action<string> onStarted,
             Action<string> onCompleted)
@@ -276,11 +329,14 @@ namespace HP.Framework.Animations
             returnStateName = nextStateName;
             startedCallback = onStarted;
             completedCallback = onCompleted;
+            markerNormalizedTime = playbackMarkerNormalizedTime;
+            markerCallback = playbackMarkerCallback;
             activeStateHash = stateHash;
             activeLayer = layer;
             activeLoop = loop;
             activeHoldFinalFrame = holdFinalFrame;
             completionRaised = false;
+            markerRaised = false;
             holdingFinalFrame = false;
             isPlaying = true;
 
@@ -397,12 +453,15 @@ namespace HP.Framework.Animations
             completionRaised = false;
             startedCallback = null;
             completedCallback = null;
+            markerCallback = null;
             activeStateName = null;
             returnStateName = null;
             activeStateHash = 0;
             activeLayer = 0;
             activeLoop = false;
             activeHoldFinalFrame = false;
+            markerNormalizedTime = -1f;
+            markerRaised = false;
         }
 
         #endregion
