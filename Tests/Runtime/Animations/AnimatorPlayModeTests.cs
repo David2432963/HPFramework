@@ -74,6 +74,30 @@ namespace HP.Framework.Tests.Runtime.Animations
         }
 
         [UnityTest]
+        public IEnumerator MarkerPlayback_FiresMarkerOnceBeforeCompletion()
+        {
+            AnimatorPlay playback = CreatePlayback("MarkerPlayback");
+            int markerCount = 0;
+            int completionCount = 0;
+
+            Assert.That(
+                playback.PlayOneShotWithMarker(
+                    "Inspect",
+                    "Idle",
+                    0.5f,
+                    _ => markerCount++,
+                    transitionDuration: 0f,
+                    onCompleted: _ => completionCount++),
+                Is.True);
+
+            yield return WaitUntil(() => completionCount == 1);
+
+            Assert.That(markerCount, Is.EqualTo(1));
+            Assert.That(completionCount, Is.EqualTo(1));
+            Assert.That(FrameworkTickRegistry.ActiveCount, Is.Zero);
+        }
+
+        [UnityTest]
         public IEnumerator LoopPlayback_DoesNotRegisterPerObjectTick()
         {
             AnimatorPlay playback = CreatePlayback("LoopPlayback");

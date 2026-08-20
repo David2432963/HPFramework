@@ -262,6 +262,22 @@ namespace HP.Framework.Animations
                     || string.Equals(activeStateName, stateName, StringComparison.Ordinal));
         }
 
+        public bool HasState(string stateName, int layer = 0)
+        {
+            if (animator == null)
+            {
+                animator = GetComponent<Animator>();
+            }
+
+            if (animator == null || string.IsNullOrWhiteSpace(stateName) || !IsValidLayer(layer))
+            {
+                return false;
+            }
+
+            string fullStateName = ResolveStateName(stateName, layer);
+            return animator.HasState(layer, Animator.StringToHash(fullStateName));
+        }
+
         #endregion
 
         #region Playback
