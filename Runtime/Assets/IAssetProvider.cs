@@ -5,8 +5,9 @@ using UnityEngine;
 namespace HP.Framework.Assets
 {
     /// <summary>
-    /// Contract for async asset loading and instantiation using UniTask.
+    /// v3 compatibility contract for async asset loading and instantiation using UniTask.
     /// Hides Addressables / Resources implementation details from domain and presentation layers.
+    /// New ownership-sensitive code should prefer IAssetLeaseProvider when the provider supports it.
     /// </summary>
     public interface IAssetProvider
     {

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using HP.Framework;
 using HP.Framework.Bootstrap;
+using HP.Framework.Lifecycle;
 using UnityEditor;
 using UnityEngine;
 using VContainer.Unity;
@@ -154,6 +155,16 @@ namespace HP.Framework.Editor
                 ? HPFrameworkProjectPaths.BootstrapPath
                 : HPFrameworkProjectPaths.BootstrapTemplatePath;
             GameObject bootstrap = AssetDatabase.LoadAssetAtPath<GameObject>(bootstrapPath);
+            ApplicationLifecycleService lifecycle = bootstrap != null
+                ? bootstrap.GetComponentInChildren<ApplicationLifecycleService>(true)
+                : null;
+            if (lifecycle == null)
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] Bootstrap does not contain ApplicationLifecycleService. Run Setup to repair it.");
+            }
+
             GameSceneManager sceneManager = bootstrap != null
                 ? bootstrap.GetComponentInChildren<GameSceneManager>(true)
                 : null;

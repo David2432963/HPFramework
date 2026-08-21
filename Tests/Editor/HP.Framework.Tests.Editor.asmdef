@@ -9,6 +9,7 @@
                        "HP.Framework.Editor",
                        "HP.Framework.Haptics",
                        "HP.Framework.Input",
+                       "HP.Framework.Lifecycle",
                        "HP.Framework.Persistence",
                        "HP.Framework.Pooling",
                        "HP.Framework.UI",

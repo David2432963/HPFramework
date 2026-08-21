@@ -6,6 +6,7 @@ using HP.Framework.Assets;
 using HP.Framework.Audio;
 using HP.Framework.Common;
 using HP.Framework.Haptics;
+using HP.Framework.Lifecycle;
 using HP.Framework.Persistence;
 using HP.Framework.Pooling;
 using HP.Framework.UI;
@@ -20,6 +21,7 @@ namespace HP.Framework.Bootstrap
     public class RootLifetimeScope : LifetimeScope
     {
         [Header("Runtime Managers")]
+        [SerializeField] private ApplicationLifecycleService applicationLifecycle;
         [SerializeField] private AudioManager audioManager;
         [SerializeField] private UIManager uiManager;
         [Tooltip("Optional input component. HP Framework InputManager is registered when the Input System module is available.")]
@@ -96,7 +98,30 @@ namespace HP.Framework.Bootstrap
         protected virtual void RegisterAssetProvider(IContainerBuilder builder)
         {
             builder.Register<ResourcesAssetProvider>(Lifetime.Singleton)
+                .AsSelf()
                 .As<IAssetProvider>()
+                .As<IAssetLeaseProvider>()
+                .As<IAssetMemoryService>()
+                .As<IAssetDiagnostics>()
+                .As<IDisposable>();
+
+            RegisterAssetMemoryLifecycleIntegration(builder);
+        }
+
+        /// <summary>
+        /// Optional helper for custom asset-provider registrations. Call this after registering an
+        /// IAssetMemoryService when the custom provider should trim zero-reference records on the
+        /// framework low-memory signal.
+        /// </summary>
+        protected void RegisterAssetMemoryLifecycleIntegration(IContainerBuilder builder)
+        {
+            if (applicationLifecycle == null)
+            {
+                return;
+            }
+
+            builder.Register<AssetMemoryLifecycleTrimmer>(Lifetime.Singleton)
+                .As<IInitializable>()
                 .As<IDisposable>();
         }
 
@@ -133,8 +158,16 @@ namespace HP.Framework.Bootstrap
                 .AsSelf()
                 .As<ISettingsProvider>()
                 .As<ISettingsService>()
+                .As<ISettingsFlushService>()
                 .As<IInitializable>()
                 .As<IDisposable>();
+
+            if (applicationLifecycle != null)
+            {
+                builder.Register<ApplicationLifecycleSettingsFlush>(Lifetime.Singleton)
+                    .As<IInitializable>()
+                    .As<IDisposable>();
+            }
         }
 
         private static void RegisterProcedureManager(IContainerBuilder builder)
@@ -147,6 +180,14 @@ namespace HP.Framework.Bootstrap
 
         private void RegisterComponents(IContainerBuilder builder)
         {
+            if (applicationLifecycle != null)
+            {
+                builder.RegisterComponent(applicationLifecycle)
+                    .AsSelf()
+                    .As<IApplicationLifecycle>()
+                    .As<IDisposable>();
+            }
+
             if (audioManager != null)
             {
                 builder.RegisterComponent(audioManager)

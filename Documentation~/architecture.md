@@ -16,6 +16,7 @@ The canonical Bootstrap is organized by ownership domain:
 
 ```text
 Bootstrap                         RootLifetimeScope
+├── Lifecycle                     ApplicationLifecycleService
 ├── Audio                         AudioManager
 ├── UI                            UIManager
 │   ├── UICamera
@@ -34,6 +35,10 @@ Bootstrap                         RootLifetimeScope
 `Bootstrap` should remain a composition root rather than a dumping ground for runtime children. Audio runtime channels belong under `Audio`; global pool contents belong under `Pools`; persistent UI belongs under `UI`.
 
 Normal Setup/Repair preserves existing manager ownership. The explicit Reset action migrates/restores the canonical hierarchy.
+
+`ApplicationLifecycleService` is the root-owned source of truth for pause/resume, focus, low-memory and quit signals. It has no `Update()` loop. The Lifecycle assembly depends only on Core; reactions from settings/assets/pools remain composition adapters in higher modules so Lifecycle never depends back on those systems.
+
+The default `ResourcesAssetProvider` exposes both the v3 compatibility `IAssetProvider` and the ownership-aware `IAssetLeaseProvider`. Asset identity is one key plus one canonical runtime type; active references protect records from low-memory trimming. Assets does not reference Lifecycle directly: Bootstrap owns the low-memory trim adapter. See [Assets and ownership](assets.md).
 
 `InputManager` is the application-level owner of Input System map lifecycle. It owns one primary/current map and can explicitly track additional maps that must coexist with it through `TryEnableAdditionalMap` / `TryDisableAdditionalMap`. Game code should read actions through `InputManager` and request map state through these APIs instead of calling `InputActionMap.Enable` / `Disable` directly.
 

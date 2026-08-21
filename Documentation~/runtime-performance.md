@@ -20,11 +20,13 @@ Spawn and release therefore reuse the cached component list instead of calling `
 
 The expected contract is that an instance does not add/remove `IPoolable` components after entering the pool.
 
-## Resources loading
+## Resources loading and ownership
 
-`ResourcesAssetProvider` serializes same-key load requests. If multiple callers request the same key concurrently, one caller performs the Resources load and later callers reuse the cached result rather than issuing duplicate same-key loads.
+`ResourcesAssetProvider` shares one underlying same-key load across concurrent compatible requests. New code should prefer `IAssetLeaseProvider.AcquireAsync<T>()`: each returned lease owns one logical reference and a cancelled waiter does not cancel the shared Unity load needed by other waiters.
 
-The underlying Unity Resources APIs are still intended for Unity's main thread.
+Released lease records can remain cached at zero references until `IAssetMemoryService.TrimUnused()` runs. Low-memory trimming never removes a record with an active reference or waiter. Supported non-GameObject Resources assets can be passed to `Resources.UnloadAsset`; GameObject/Component assets only leave provider ownership because their physical unload semantics differ. The provider never invokes global `Resources.UnloadUnusedAssets()` automatically.
+
+The underlying Unity Resources APIs are still intended for Unity's main thread. See [Assets and ownership](assets.md) for the full contract.
 
 ## Persistence
 

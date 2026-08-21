@@ -2,7 +2,7 @@
     "name":  "com.hp.framework",
     "version":  "3.0.0",
     "displayName":  "HP Framework",
-    "description":  "VContainer-first modular Unity game framework with scoped services, scene flow, UI, pooling, persistence, audio, input, haptics, graphics, diagnostics and reusable extensions.",
+    "description":  "VContainer-first modular Unity game framework with scoped services, application lifecycle, scene flow, UI, pooling, persistence, audio, input, haptics, graphics, diagnostics and reusable extensions.",
     "unity":  "6000.0",
     "author":  {
                    "name":  "HP"

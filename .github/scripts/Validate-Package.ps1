@@ -37,6 +37,7 @@ if ($package) {
     if ([string]$package.version -notmatch '^\d+\.\d+\.\d+$') { Add-Error "package.json version must use SemVer x.y.z." }
     if ([string]$package.unity -notmatch '^6000\.') { Add-Warning "HP Framework is currently validated against Unity 6; package.json unity is '$($package.unity)'." }
     if ($package.dependencies.'com.unity.nuget.newtonsoft-json') { Add-Error "Newtonsoft is bundled under ThirdParty/NewtonsoftJson and must not be declared as an external package dependency." }
+    if ($package.dependencies.'com.unity.addressables') { Add-Error "Addressables must remain an optional integration and must not be a hard dependency of the base HP Framework package." }
     $bundledNewtonsoft = Join-Path $repoRoot "ThirdParty\NewtonsoftJson\HP.Framework.NewtonsoftJson.dll"
     if (-not (Test-Path $bundledNewtonsoft -PathType Leaf)) {
         Add-Error "Missing bundled Newtonsoft assembly: ThirdParty/NewtonsoftJson/HP.Framework.NewtonsoftJson.dll"
@@ -137,7 +138,7 @@ foreach ($root in $unityRoots) {
 
 $requiredAssemblies = @(
     "HP.Framework.Core", "HP.Framework.Assets", "HP.Framework.Audio", "HP.Framework.Bootstrap",
-    "HP.Framework.Editor", "HP.Framework.Haptics", "HP.Framework.Input", "HP.Framework.Persistence",
+    "HP.Framework.Editor", "HP.Framework.Haptics", "HP.Framework.Input", "HP.Framework.Lifecycle", "HP.Framework.Persistence",
     "HP.Framework.Pooling", "HP.Framework.UI", "HP.Framework.UI.TMP",
     "HP.Framework.Graphics", "HP.Framework.Diagnostics", "HP.Framework.Extensions", "HP.Framework.SafeArea",
     "HP.Framework.Tests.Editor", "HP.Framework.Tests.Runtime", "VContainer", "UniTask"

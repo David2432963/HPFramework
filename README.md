@@ -71,6 +71,7 @@ The canonical Bootstrap is organized by ownership domain rather than putting eve
 
 ```text
 Bootstrap                         RootLifetimeScope
+├── Lifecycle                     ApplicationLifecycleService
 ├── Audio                         AudioManager
 ├── UI                            UIManager
 │   ├── UICamera
@@ -86,7 +87,7 @@ Bootstrap                         RootLifetimeScope
 └── Haptics                       HapticManager
 ```
 
-`Bootstrap` is the composition root. Runtime-owned children such as SFX channels or pooled instances live under their owning domain instead of cluttering the root hierarchy.
+`Bootstrap` is the composition root. `ApplicationLifecycleService` centralizes pause/resume, focus, low-memory and quit signals without an idle `Update()` loop. Runtime-owned children such as SFX channels or pooled instances live under their owning domain instead of cluttering the root hierarchy.
 
 When Input System is available, Setup configures the project-appropriate EventSystem input module. When URP is available, Setup/runtime configure the framework UI camera for Base/Overlay stacking without making the reusable template hard-depend on URP camera data.
 
@@ -128,14 +129,14 @@ When URP is present, HP Framework configures `Camera.main` as a Base camera and 
 The framework favors predictable hot paths rather than hidden per-frame work:
 
 - pooled instances cache their `IPoolable` components instead of rescanning hierarchies on every spawn/release
-- same-key `ResourcesAssetProvider` requests are serialized so only one Resources load is performed before later callers reuse the cache
+- ownership-aware `IAssetLeaseProvider` requests share same-key loads, reference-count active owners, isolate waiter cancellation, and trim only zero-reference records
 - JSON operations targeting the same save path are serialized and path traversal outside `Application.persistentDataPath` is rejected
 - physics helpers expose non-alloc query overloads
 - `CameraUtils` exposes caller-owned frustum-plane buffers for bulk visibility checks
 - Ripple and normal scaled-time Bubbling Surface animation advance from the GPU shader clock instead of pushing effect time through a `MaterialPropertyBlock` every frame
 - Safe Area and Diagnostics avoid unnecessary every-frame UI/property updates
 
-See [Runtime performance](Documentation~/runtime-performance.md) for usage patterns and trade-offs.
+See [Runtime performance](Documentation~/runtime-performance.md) for usage patterns and trade-offs, and [Assets and ownership](Documentation~/assets.md) for provider/lease lifetime semantics.
 
 ## Framework layout
 

@@ -48,6 +48,7 @@ Use **Reset Bootstrap To Framework Defaults** only when you intentionally want t
 
 ```text
 Bootstrap                         RootLifetimeScope
+├── Lifecycle                     ApplicationLifecycleService
 ├── Audio                         AudioManager
 ├── UI                            UIManager
 │   ├── UICamera
@@ -63,7 +64,7 @@ Bootstrap                         RootLifetimeScope
 └── Haptics                       HapticManager
 ```
 
-The root object is the composition root. Runtime-created SFX channels and pooled instances belong under their owning domain rather than directly under `Bootstrap`.
+The root object is the composition root. `ApplicationLifecycleService` is repaired/created under `Lifecycle` and exposes normalized application pause/resume, focus, low-memory and quit signals. Runtime-created SFX channels and pooled instances belong under their owning domain rather than directly under `Bootstrap`.
 
 ## 4. Put code in the correct lifetime
 
@@ -106,5 +107,6 @@ Read:
 
 - [Architecture](architecture.md)
 - [Lifetime scopes](scopes.md)
+- [Assets and ownership](assets.md)
 - [UI and pooling](ui-and-pooling.md)
 - [Runtime performance](runtime-performance.md)

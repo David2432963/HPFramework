@@ -10,7 +10,7 @@
     /// Single source of truth for mutable application preferences.
     /// Values are cached in memory and flushed on explicit Save or container disposal.
     /// </summary>
-    public sealed class SettingsManager : ISettingsService, IInitializable, IDisposable
+    public sealed class SettingsManager : ISettingsService, ISettingsFlushService, IInitializable, IDisposable
     {
         private readonly ISettingsStore store;
 
@@ -30,8 +30,10 @@
         private int targetFrameRate;
         private int qualityLevel;
         private bool initialized;
+        private bool dirty;
 
         public bool IsInitialized => initialized;
+        public bool IsDirty => dirty;
 
         public bool SoundEnabled
         {
@@ -154,17 +156,36 @@
             Application.targetFrameRate = targetFrameRate;
             QualitySettings.SetQualityLevel(qualityLevel, true);
             initialized = true;
+            dirty = false;
         }
 
         public void Save()
         {
             store.Save();
+            dirty = false;
+        }
+
+        public bool SaveIfDirty()
+        {
+            if (!dirty)
+            {
+                return false;
+            }
+
+            Save();
+            return true;
         }
 
         public void Dispose()
         {
-            Save();
-            SettingChanged = null;
+            try
+            {
+                SaveIfDirty();
+            }
+            finally
+            {
+                SettingChanged = null;
+            }
         }
 
         private bool SetValue<T>(
@@ -179,6 +200,7 @@
             }
 
             field = value;
+            dirty = true;
             persist?.Invoke(value);
             SettingChanged?.Invoke(settingName);
             return true;

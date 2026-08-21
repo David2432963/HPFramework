@@ -10,6 +10,7 @@ using HP.Framework.Bootstrap;
 using HP.Framework.Common;
 using HP.Framework.Haptics;
 using HP.Framework.Input;
+using HP.Framework.Lifecycle;
 using HP.Framework.Pooling;
 using HP.Framework.UI;
 using HP.Framework.Persistence;
@@ -89,6 +90,7 @@ namespace HP.Framework.Tests
                 new Dictionary<string, object>();
 
             public int SaveCount { get; private set; }
+            public bool ThrowOnSave { get; set; }
 
             public bool HasKey(string key, string section = null)
                 => values.ContainsKey(BuildKey(key, section));
@@ -123,6 +125,10 @@ namespace HP.Framework.Tests
             public void Save()
             {
                 SaveCount++;
+                if (ThrowOnSave)
+                {
+                    throw new InvalidOperationException("Expected settings save failure.");
+                }
             }
 
             private T Get<T>(string key, T defaultValue, string section)
@@ -140,6 +146,38 @@ namespace HP.Framework.Tests
 
             private static string BuildKey(string key, string section)
                 => string.IsNullOrEmpty(section) ? key : section + "/" + key;
+        }
+
+        [Test]
+        public void SettingsManager_DirtyFlush_IsIdempotent()
+        {
+            var store = new MemorySettingsStore();
+            var settings = new SettingsManager(store);
+            settings.Initialize();
+
+            Assert.That(settings.IsDirty, Is.False);
+            Assert.That(settings.SaveIfDirty(), Is.False);
+            Assert.That(store.SaveCount, Is.Zero);
+
+            settings.SoundEnabled = !settings.SoundEnabled;
+            Assert.That(settings.IsDirty, Is.True);
+            Assert.That(settings.SaveIfDirty(), Is.True);
+            Assert.That(settings.IsDirty, Is.False);
+            Assert.That(store.SaveCount, Is.EqualTo(1));
+            Assert.That(settings.SaveIfDirty(), Is.False);
+            Assert.That(store.SaveCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void SettingsManager_FailedSave_RemainsDirty()
+        {
+            var store = new MemorySettingsStore { ThrowOnSave = true };
+            var settings = new SettingsManager(store);
+            settings.Initialize();
+            settings.SoundEnabled = !settings.SoundEnabled;
+
+            Assert.Throws<InvalidOperationException>(() => settings.SaveIfDirty());
+            Assert.That(settings.IsDirty, Is.True);
         }
 
         [Test]
@@ -591,6 +629,7 @@ namespace HP.Framework.Tests
 
                 Assert.That(missingScripts, Is.Zero);
                 Assert.That(root.GetComponent<RootLifetimeScope>(), Is.Not.Null);
+                Assert.That(root.transform.Find("Lifecycle")?.GetComponent<ApplicationLifecycleService>(), Is.Not.Null);
                 Assert.That(root.transform.Find("Audio")?.GetComponent<AudioManager>(), Is.Not.Null);
                 Assert.That(root.transform.Find("UI")?.GetComponent<UIManager>(), Is.Not.Null);
                 Assert.That(root.transform.Find("Input")?.GetComponent<InputManager>(), Is.Not.Null);

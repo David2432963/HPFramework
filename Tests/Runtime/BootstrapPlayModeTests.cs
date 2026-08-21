@@ -13,6 +13,7 @@ using HP.Framework.Bootstrap.Loading;
 using HP.Framework.Common;
 using HP.Framework.Haptics;
 using HP.Framework.Input;
+using HP.Framework.Lifecycle;
 using HP.Framework.Persistence;
 using HP.Framework.Pooling;
 using HP.Framework.UI;
@@ -470,9 +471,20 @@ namespace HP.Framework.Tests
                 Assert.That(scope.Container, Is.Not.Null);
 
                 Assert.That(scope.Container.Resolve<ISettingsService>(), Is.Not.Null);
+                IApplicationLifecycle lifecycle = scope.Container.Resolve<IApplicationLifecycle>();
+                Assert.That(lifecycle, Is.Not.Null);
+                Assert.That(scope.Container.Resolve<ApplicationLifecycleService>(), Is.SameAs(lifecycle));
                 Assert.That(scope.Container.Resolve<IEventBus>(), Is.Not.Null);
                 Assert.That(scope.Container.Resolve<IProcedureService>(), Is.Not.Null);
-                Assert.That(scope.Container.Resolve<IAssetProvider>(), Is.Not.Null);
+                IAssetProvider assetProvider = scope.Container.Resolve<IAssetProvider>();
+                IAssetLeaseProvider assetLeaseProvider = scope.Container.Resolve<IAssetLeaseProvider>();
+                IAssetMemoryService assetMemory = scope.Container.Resolve<IAssetMemoryService>();
+                IAssetDiagnostics assetDiagnostics = scope.Container.Resolve<IAssetDiagnostics>();
+                ResourcesAssetProvider resourcesProvider = scope.Container.Resolve<ResourcesAssetProvider>();
+                Assert.That(assetProvider, Is.SameAs(resourcesProvider));
+                Assert.That(assetLeaseProvider, Is.SameAs(resourcesProvider));
+                Assert.That(assetMemory, Is.SameAs(resourcesProvider));
+                Assert.That(assetDiagnostics, Is.SameAs(resourcesProvider));
                 Assert.That(scope.Container.Resolve<IAudioService>(), Is.Not.Null);
                 Assert.That(scope.Container.Resolve<IUIService>(), Is.Not.Null);
                 Assert.That(scope.Container.Resolve<IPoolService>(), Is.Not.Null);
@@ -494,12 +506,44 @@ namespace HP.Framework.Tests
             yield return null;
         }
 
+        [UnityTest]
+        public IEnumerator Bootstrap_DisposeUnsubscribesLifecycle_AndRebuildDoesNotLeak()
+        {
+            GameObject firstRoot = CreateConfiguredBootstrap();
+            firstRoot.SetActive(true);
+            yield return null;
+
+            RootLifetimeScope firstScope = firstRoot.GetComponent<RootLifetimeScope>();
+            ApplicationLifecycleService firstLifecycle =
+                firstScope.Container.Resolve<ApplicationLifecycleService>();
+            Assert.That(firstLifecycle.IsLowMemorySubscribed, Is.True);
+
+            firstScope.Dispose();
+            Assert.That(firstLifecycle.IsLowMemorySubscribed, Is.False);
+            yield return null;
+
+            GameObject secondRoot = CreateConfiguredBootstrap();
+            secondRoot.SetActive(true);
+            yield return null;
+
+            RootLifetimeScope secondScope = secondRoot.GetComponent<RootLifetimeScope>();
+            ApplicationLifecycleService secondLifecycle =
+                secondScope.Container.Resolve<ApplicationLifecycleService>();
+            Assert.That(secondLifecycle.IsLowMemorySubscribed, Is.True);
+
+            secondScope.Dispose();
+            Assert.That(secondLifecycle.IsLowMemorySubscribed, Is.False);
+            yield return null;
+        }
+
         private static GameObject CreateConfiguredBootstrap()
         {
             GameObject root = new GameObject("BootstrapPlayModeTest");
             root.SetActive(false);
 
             RootLifetimeScope scope = root.AddComponent<RootLifetimeScope>();
+            Transform lifecycleRoot = CreateChild(root.transform, "Lifecycle");
+            ApplicationLifecycleService lifecycle = lifecycleRoot.gameObject.AddComponent<ApplicationLifecycleService>();
             Transform audioRoot = CreateChild(root.transform, "Audio");
             AudioManager audioManager = audioRoot.gameObject.AddComponent<AudioManager>();
             Transform uiRoot = CreateChild(root.transform, "UI");
@@ -521,6 +565,7 @@ namespace HP.Framework.Tests
             RectTransform notificationRoot = CreateRectChild(canvasRoot, "NotificationRoot");
             RectTransform inputBlocker = CreateRectChild(canvasRoot, "InputBlocker");
 
+            SetField(scope, "applicationLifecycle", lifecycle);
             SetField(scope, "audioManager", audioManager);
             SetField(scope, "uiManager", uiManager);
             SetField(scope, "inputManager", inputManager);

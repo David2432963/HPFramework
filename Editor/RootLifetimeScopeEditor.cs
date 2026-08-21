@@ -5,6 +5,7 @@ using System.Linq;
 using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
 using HP.Framework.Haptics;
+using HP.Framework.Lifecycle;
 using HP.Framework.Pooling;
 using HP.Framework.UI;
 using UnityEditor;
@@ -103,6 +104,12 @@ namespace HP.Framework.Editor
             Undo.RegisterFullObjectHierarchyUndo(rootGo, "Auto Setup Bootstrap Hierarchy");
 
             SerializedObject scopeObject = new SerializedObject(scope);
+            ApplicationLifecycleService applicationLifecycle =
+                ResolveOrCreateManagedComponent<ApplicationLifecycleService>(
+                    scopeObject.FindProperty("applicationLifecycle"),
+                    bootstrapRoot,
+                    "Lifecycle",
+                    resetDefaults);
             AudioManager audioManager = ResolveOrCreateManagedComponent<AudioManager>(
                 scopeObject.FindProperty("audioManager"),
                 bootstrapRoot,
@@ -252,6 +259,7 @@ namespace HP.Framework.Editor
             poolObject.ApplyModifiedProperties();
 
             scopeObject.Update();
+            scopeObject.FindProperty("applicationLifecycle").objectReferenceValue = applicationLifecycle;
             scopeObject.FindProperty("audioManager").objectReferenceValue = audioManager;
             scopeObject.FindProperty("uiManager").objectReferenceValue = uiManager;
             scopeObject.FindProperty("inputManager").objectReferenceValue = inputManager;
