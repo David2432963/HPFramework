@@ -13,6 +13,7 @@
                        "HP.Framework.Pooling",
                        "HP.Framework.UI",
                        "UniTask",
+                       "Unity.InputSystem",
                        "VContainer"
                    ],
     "includePlatforms":  [

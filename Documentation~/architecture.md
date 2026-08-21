@@ -35,6 +35,8 @@ Bootstrap                         RootLifetimeScope
 
 Normal Setup/Repair preserves existing manager ownership. The explicit Reset action migrates/restores the canonical hierarchy.
 
+`InputManager` is the application-level owner of Input System map lifecycle. It owns one primary/current map and can explicitly track additional maps that must coexist with it through `TryEnableAdditionalMap` / `TryDisableAdditionalMap`. Game code should read actions through `InputManager` and request map state through these APIs instead of calling `InputActionMap.Enable` / `Disable` directly.
+
 ## Runtime ownership rules
 
 - Application-wide services belong to the root container.

@@ -1,14 +1,15 @@
 ﻿namespace HP.Framework.Input
 {
     using System;
+    using System.Collections.Generic;
     using HP.Framework;
     using UnityEngine;
     using UnityEngine.InputSystem;
     using VContainer.Unity;
 
     /// <summary>
-    /// Shared Input System context controller. It owns one active framework action map at a time
-    /// without disabling unrelated maps in the same InputActionAsset.
+    /// Shared Input System context controller. It owns one primary action map plus explicitly
+    /// tracked additional maps without disabling unrelated maps in the same InputActionAsset.
     /// </summary>
     public sealed class InputManager : MonoBehaviour, IInitializable, IDisposable
     {
@@ -16,6 +17,7 @@
         [SerializeField] private string defaultActionMap;
         [SerializeField] private bool enableDefaultMapOnInitialize = true;
 
+        private readonly HashSet<string> additionalMapNames = new HashSet<string>(StringComparer.Ordinal);
         private string currentMapName;
         private bool initialized;
 
@@ -53,7 +55,7 @@
                 return;
             }
 
-            DisableCurrentMap();
+            DisableOwnedMaps();
             inputActions = asset;
             currentMapName = null;
 
@@ -70,15 +72,71 @@
                 return false;
             }
 
-            if (!string.IsNullOrWhiteSpace(currentMapName)
-                && !string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                additionalMapNames.Remove(mapName);
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(currentMapName))
             {
                 DisableCurrentMap();
             }
 
+            additionalMapNames.Remove(mapName);
             actionMap.Enable();
             currentMapName = mapName;
             return true;
+        }
+
+        /// <summary>
+        /// Enables an additional map without changing the current primary map. Additional maps are
+        /// tracked by this manager and are disabled when the manager is disposed or its asset changes.
+        /// </summary>
+        public bool TryEnableAdditionalMap(string mapName)
+        {
+            if (string.IsNullOrWhiteSpace(mapName)
+                || string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
+            {
+                return false;
+            }
+
+            actionMap.Enable();
+            additionalMapNames.Add(mapName);
+            return true;
+        }
+
+        /// <summary>
+        /// Releases an additional map owned by this manager. Disabling an already released map is
+        /// idempotent as long as that map exists and is not the current primary map.
+        /// </summary>
+        public bool TryDisableAdditionalMap(string mapName)
+        {
+            if (string.IsNullOrWhiteSpace(mapName)
+                || string.Equals(currentMapName, mapName, StringComparison.Ordinal)
+                || !InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
+            {
+                return false;
+            }
+
+            if (!additionalMapNames.Remove(mapName))
+            {
+                return true;
+            }
+
+            actionMap.Disable();
+            return true;
+        }
+
+        public bool IsMapEnabled(string mapName)
+        {
+            return InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap)
+                && actionMap.enabled;
         }
 
         public bool TryDisableMap(string mapName)
@@ -92,6 +150,8 @@
             {
                 currentMapName = null;
             }
+
+            additionalMapNames.Remove(mapName);
             return true;
         }
 
@@ -143,9 +203,25 @@
 
         public string GetCurrentMapName() => currentMapName;
 
-        public void Dispose()
+        private void DisableOwnedMaps()
         {
             DisableCurrentMap();
+            if (additionalMapNames.Count == 0)
+            {
+                return;
+            }
+
+            foreach (string mapName in additionalMapNames)
+            {
+                InputActionMapFacade.DisableActionMap(inputActions, mapName);
+            }
+
+            additionalMapNames.Clear();
+        }
+
+        public void Dispose()
+        {
+            DisableOwnedMaps();
             initialized = false;
         }
     }
