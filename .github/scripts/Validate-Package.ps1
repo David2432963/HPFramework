@@ -89,6 +89,23 @@ foreach ($name in $requiredRoots) {
     }
 }
 
+$requiredCanonicalAssets = @(
+    "Runtime/Bootstrap/Prefabs/Bootstrap.prefab",
+    "Runtime/Defaults/VContainerSettings.asset",
+    "Runtime/Defaults/DefaultAudioLibrary.asset",
+    "Runtime/Defaults/DefaultUICatalog.asset",
+    "Runtime/Defaults/Performance/Low.asset",
+    "Runtime/Defaults/Performance/Medium.asset",
+    "Runtime/Defaults/Performance/High.asset",
+    "Runtime/Defaults/Performance/PerformanceCatalog.asset",
+    "Runtime/Defaults/Performance/DevicePerformancePolicy.asset"
+)
+foreach ($asset in $requiredCanonicalAssets) {
+    if (-not (Test-Path (Join-Path $repoRoot $asset) -PathType Leaf)) {
+        Add-Error "Missing zero-setup canonical asset: $asset"
+    }
+}
+
 $forbiddenTopLevel = @("Assets", "Packages", "ProjectSettings", "Library", "Temp", "Logs", "UserSettings", "Obj", "Build", "Builds", "DevProject", "_Base")
 foreach ($name in $forbiddenTopLevel) {
     if (Test-Path (Join-Path $repoRoot $name)) { Add-Error "Forbidden publish folder at package root: $name" }
@@ -233,6 +250,7 @@ $externalScriptGuids = [System.Collections.Generic.HashSet[string]]::new([String
     "dc42784cf147c0c48a680349fa168899", # GraphicRaycaster
     "fe87c0e1cc204ed48ad3b37840f39efc", # Image
     "76c392e42b5098c458856cdf6ecaaaa1", # EventSystem
+    "01614664b831546d2ae94a42149d80ac", # InputSystemUIInputModule
     "5f7201a12d95ffc409449d95f23cf332", # Text
     "4e29b1a8efbd4b44bb3f3716e73f07ff"  # Button
 ) | ForEach-Object { [void]$externalScriptGuids.Add($_) }

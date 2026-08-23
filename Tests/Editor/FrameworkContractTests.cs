@@ -635,13 +635,17 @@ namespace HP.Framework.Tests
 
     public sealed class BootstrapPrefabTests
     {
-        private const string BootstrapTemplateGuid = "550d92965c5c4c53b9949039d465faba";
+        private const string CanonicalBootstrapGuid = "550d92965c5c4c53b9949039d465faba";
+        private const string FrameworkRoot = "Assets/Plugins/HPFramework/";
+        private const string ExpectedBootstrapPath =
+            "Assets/Plugins/HPFramework/Runtime/Bootstrap/Prefabs/Bootstrap.prefab";
 
-        private static string BootstrapPath => AssetDatabase.GUIDToAssetPath(BootstrapTemplateGuid);
+        private static string BootstrapPath => AssetDatabase.GUIDToAssetPath(CanonicalBootstrapGuid);
 
         [Test]
         public void BootstrapPrefab_HasNoMissingScripts_AndContainsRequiredManagers()
         {
+            Assert.That(BootstrapPath, Is.EqualTo(ExpectedBootstrapPath));
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(BootstrapPath);
             Assert.That(prefab, Is.Not.Null, $"Bootstrap prefab was not found at {BootstrapPath}.");
 
@@ -667,11 +671,19 @@ namespace HP.Framework.Tests
                 Transform uiRoot = root.transform.Find("UI");
                 Transform eventSystemRoot = uiRoot?.Find("EventSystem");
                 Assert.That(eventSystemRoot?.GetComponent<EventSystem>(), Is.Not.Null);
+                BaseInputModule inputModule = eventSystemRoot?.GetComponent<BaseInputModule>();
+                Assert.That(inputModule, Is.Not.Null,
+                    "Canonical Bootstrap must be immediately usable without running Setup.");
                 Assert.That(
-                    eventSystemRoot?.GetComponent<BaseInputModule>(),
-                    Is.Null,
-                    "The reusable template must not serialize an optional input-module package reference; " +
-                    "Setup/Reset adds the project-appropriate module when generating Bootstrap.");
+                    inputModule.GetType().FullName,
+                    Is.EqualTo("UnityEngine.InputSystem.UI.InputSystemUIInputModule"));
+
+                RootLifetimeScope scope = root.GetComponent<RootLifetimeScope>();
+                SerializedObject scopeObject = new SerializedObject(scope);
+                Assert.That(scopeObject.FindProperty("audioLibrary")?.objectReferenceValue, Is.Not.Null);
+                Assert.That(scopeObject.FindProperty("uiCatalog")?.objectReferenceValue, Is.Not.Null);
+                Assert.That(scopeObject.FindProperty("performanceCatalog")?.objectReferenceValue, Is.Not.Null);
+                Assert.That(scopeObject.FindProperty("devicePerformancePolicy")?.objectReferenceValue, Is.Not.Null);
 
                 Type urpCameraDataType = Type.GetType(
                     "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, Unity.RenderPipelines.Universal.Runtime",
@@ -690,6 +702,97 @@ namespace HP.Framework.Tests
                 UnityEditor.PrefabUtility.UnloadPrefabContents(root);
             }
         }
+
+        [Test]
+        public void RepairDefaults_PreservesPrefabInstanceProjectOverrides()
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(BootstrapPath);
+            GameObject instance = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
+            UICatalogSO customUi = ScriptableObject.CreateInstance<UICatalogSO>();
+            AudioLibrarySO customAudio = ScriptableObject.CreateInstance<AudioLibrarySO>();
+
+            try
+            {
+                Assert.That(instance, Is.Not.Null);
+                RootLifetimeScope scope = instance.GetComponent<RootLifetimeScope>();
+                UIManager uiManager = instance.GetComponentInChildren<UIManager>(true);
+                AudioManager audioManager = instance.GetComponentInChildren<AudioManager>(true);
+
+                SerializedObject scopeObject = new SerializedObject(scope);
+                scopeObject.FindProperty("uiCatalog").objectReferenceValue = customUi;
+                scopeObject.FindProperty("audioLibrary").objectReferenceValue = customAudio;
+                scopeObject.ApplyModifiedPropertiesWithoutUndo();
+
+                SerializedObject uiObject = new SerializedObject(uiManager);
+                uiObject.FindProperty("uiCatalog").objectReferenceValue = customUi;
+                uiObject.ApplyModifiedPropertiesWithoutUndo();
+
+                SerializedObject audioObject = new SerializedObject(audioManager);
+                audioObject.FindProperty("audioLibrary").objectReferenceValue = customAudio;
+                audioObject.ApplyModifiedPropertiesWithoutUndo();
+
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupScriptableObjects(scope);
+
+                scopeObject.Update();
+                uiObject.Update();
+                audioObject.Update();
+                Assert.That(scopeObject.FindProperty("uiCatalog").objectReferenceValue, Is.SameAs(customUi));
+                Assert.That(scopeObject.FindProperty("audioLibrary").objectReferenceValue, Is.SameAs(customAudio));
+                Assert.That(uiObject.FindProperty("uiCatalog").objectReferenceValue, Is.SameAs(customUi));
+                Assert.That(audioObject.FindProperty("audioLibrary").objectReferenceValue, Is.SameAs(customAudio));
+            }
+            finally
+            {
+                if (instance != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(instance);
+                }
+                UnityEngine.Object.DestroyImmediate(customUi);
+                UnityEngine.Object.DestroyImmediate(customAudio);
+            }
+        }
+
+        [Test]
+        public void CanonicalDefaults_ArePresentValid_AndDoNotDependOnHostProjectAssets()
+        {
+            string[] canonicalAssets =
+            {
+                ExpectedBootstrapPath,
+                "Assets/Plugins/HPFramework/Runtime/Defaults/VContainerSettings.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/DefaultAudioLibrary.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/DefaultUICatalog.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/Performance/Low.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/Performance/Medium.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/Performance/High.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/Performance/PerformanceCatalog.asset",
+                "Assets/Plugins/HPFramework/Runtime/Defaults/Performance/DevicePerformancePolicy.asset"
+            };
+
+            for (int i = 0; i < canonicalAssets.Length; i++)
+            {
+                string assetPath = canonicalAssets[i];
+                Assert.That(AssetDatabase.LoadMainAssetAtPath(assetPath), Is.Not.Null, assetPath);
+
+                string[] dependencies = AssetDatabase.GetDependencies(assetPath, true);
+                for (int dependencyIndex = 0; dependencyIndex < dependencies.Length; dependencyIndex++)
+                {
+                    string dependency = dependencies[dependencyIndex];
+                    if (dependency.StartsWith("Assets/", StringComparison.Ordinal)
+                        && !dependency.StartsWith(FrameworkRoot, StringComparison.Ordinal))
+                    {
+                        Assert.Fail(
+                            $"Framework asset '{assetPath}' depends on host-project asset '{dependency}'. " +
+                            "Keep project customization on prefab instances instead of applying it to HP Framework assets.");
+                    }
+                }
+            }
+
+            AudioLibrarySO audio = AssetDatabase.LoadAssetAtPath<AudioLibrarySO>(
+                "Assets/Plugins/HPFramework/Runtime/Defaults/DefaultAudioLibrary.asset");
+            UICatalogSO ui = AssetDatabase.LoadAssetAtPath<UICatalogSO>(
+                "Assets/Plugins/HPFramework/Runtime/Defaults/DefaultUICatalog.asset");
+            Assert.That(audio.TryValidate(out string audioError), Is.True, audioError);
+            Assert.That(ui.TryValidate(out string uiError), Is.True, uiError);
+        }
     }
 }
-

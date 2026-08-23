@@ -5,30 +5,30 @@ namespace HP.Framework.Editor
     internal static class HPFrameworkProjectPaths
     {
         public const string FrameworkFolder = "Assets/Plugins/HPFramework";
-        public const string GeneratedFolder = FrameworkFolder + "/Generated";
-        public const string SettingsFolder = FrameworkFolder + "/Settings";
-        public const string UIAnimationPresetFolder = SettingsFolder + "/UIAnimationPresets";
+        public const string DefaultsFolder = FrameworkFolder + "/Runtime/Defaults";
+        public const string UIAnimationPresetFolder = DefaultsFolder + "/UIAnimationPresets";
         public const string LoadingSceneAssetPath =
             FrameworkFolder + "/Runtime/Bootstrap/Loading/Scenes/LoadingScene.unity";
-        public const string PerformanceFolder = SettingsFolder + "/Performance";
+        public const string PerformanceFolder = DefaultsFolder + "/Performance";
 
-        public const string BootstrapPath = GeneratedFolder + "/Bootstrap.prefab";
-        public const string VContainerSettingsPath = SettingsFolder + "/VContainerSettings.asset";
-        public const string AudioLibraryPath = SettingsFolder + "/DefaultAudioLibrary.asset";
-        public const string UICatalogPath = SettingsFolder + "/DefaultUICatalog.asset";
+        public const string BootstrapPath =
+            FrameworkFolder + "/Runtime/Bootstrap/Prefabs/Bootstrap.prefab";
+        public const string VContainerSettingsPath = DefaultsFolder + "/VContainerSettings.asset";
+        public const string AudioLibraryPath = DefaultsFolder + "/DefaultAudioLibrary.asset";
+        public const string UICatalogPath = DefaultsFolder + "/DefaultUICatalog.asset";
         public const string LowPerformanceProfilePath = PerformanceFolder + "/Low.asset";
         public const string MediumPerformanceProfilePath = PerformanceFolder + "/Medium.asset";
         public const string HighPerformanceProfilePath = PerformanceFolder + "/High.asset";
         public const string PerformanceCatalogPath = PerformanceFolder + "/PerformanceCatalog.asset";
         public const string DevicePerformancePolicyPath = PerformanceFolder + "/DevicePerformancePolicy.asset";
 
-        public const string BootstrapTemplateGuid = "550d92965c5c4c53b9949039d465faba";
+        public const string BootstrapGuid = "550d92965c5c4c53b9949039d465faba";
         public const string LoadingSceneGuid = "9806de10e37b6b04092877dc41f8724d";
         public const string ToastPrefabGuid = "ba829f6fed5fb0f4fa2a7abf5f8b87fa";
         public const string DefaultInputActionsGuid = "1b507b5bc5a885343a365d6380c49c18";
 
-        public static string BootstrapTemplatePath =>
-            AssetDatabase.GUIDToAssetPath(BootstrapTemplateGuid);
+        public static string CanonicalBootstrapPath =>
+            AssetDatabase.GUIDToAssetPath(BootstrapGuid);
 
         public static string LoadingScenePath =>
             AssetDatabase.GUIDToAssetPath(LoadingSceneGuid);

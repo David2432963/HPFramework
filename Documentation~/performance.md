@@ -28,9 +28,9 @@ Diagnostics may request a temporary FPS override through `IPerformanceDiagnostic
 
 Applying the same effective profile again is idempotent. `Reapply()` explicitly reapplies the current profile.
 
-## Profiles and project setup
+## Profiles and defaults
 
-Setup/Repair creates deterministic defaults under `Assets/Plugins/HPFramework/Settings/Performance/`:
+HP Framework ships deterministic Git-tracked defaults under `Assets/Plugins/HPFramework/Runtime/Defaults/Performance/`:
 
 - Low profile: conservative quality, 30 FPS target;
 - Medium profile: balanced quality, 60 FPS target;
@@ -38,7 +38,7 @@ Setup/Repair creates deterministic defaults under `Assets/Plugins/HPFramework/Se
 - `PerformanceCatalogSO` containing the default profiles;
 - `DevicePerformancePolicySO` used by the default classifier.
 
-The reusable Bootstrap template remains project-agnostic. Setup/Repair links the project-owned catalog and device policy to Generated Bootstrap. Project validation fails if either reference is missing.
+The canonical Bootstrap is project-agnostic and references the framework-owned catalog and device policy directly. A project may override those references on a prefab instance without modifying the canonical framework asset.
 
 ## User preference
 

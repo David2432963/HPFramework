@@ -1,6 +1,5 @@
-﻿#if UNITY_EDITOR
+#if UNITY_EDITOR
 using System;
-using System.IO;
 using System.Linq;
 using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
@@ -51,9 +50,10 @@ namespace HP.Framework.Editor
                 AutoSetupHierarchy(scope, resetDefaults: true);
             }
 
-            if (GUILayout.Button("Find / Create Project Catalogs", GUILayout.Height(26f)))
+            if (GUILayout.Button("Restore Missing Framework Defaults", GUILayout.Height(26f)))
             {
                 AutoSetupScriptableObjects(scope);
+                AutoSetupDefaultRuntimeAssets(scope);
             }
 
             EditorGUILayout.Space(4f);
@@ -169,7 +169,6 @@ namespace HP.Framework.Editor
                 uiCamera.useOcclusionCulling = false;
             }
 
-            URPCameraStackUtility.ConfigureAsOverlay(uiCamera);
 
             bool canvasCreated = uiOwner.Find("UICanvas") == null
                 && bootstrapRoot.Find("UICanvas") == null;
@@ -289,91 +288,87 @@ namespace HP.Framework.Editor
 
         public static void AutoSetupScriptableObjects(RootLifetimeScope scope)
         {
-            SerializedObject scopeObject = new SerializedObject(scope);
-            SerializedProperty scopeAudioLibrary = scopeObject.FindProperty("audioLibrary");
-            SerializedProperty scopeUiCatalog = scopeObject.FindProperty("uiCatalog");
-            SerializedProperty scopePerformanceCatalog = scopeObject.FindProperty("performanceCatalog");
-            SerializedProperty scopeDevicePerformancePolicy = scopeObject.FindProperty("devicePerformancePolicy");
+            if (scope == null)
+            {
+                throw new ArgumentNullException(nameof(scope));
+            }
 
-            AudioLibrarySO audioLibrary = FindOrCreateAsset(
-                scopeAudioLibrary.objectReferenceValue as AudioLibrarySO,
+            AudioLibrarySO audioLibrary = LoadFrameworkDefault<AudioLibrarySO>(
                 HPFrameworkProjectPaths.AudioLibraryPath);
-            UICatalogSO uiCatalog = FindOrCreateAsset(
-                scopeUiCatalog.objectReferenceValue as UICatalogSO,
+            UICatalogSO uiCatalog = LoadFrameworkDefault<UICatalogSO>(
                 HPFrameworkProjectPaths.UICatalogPath);
-            PerformanceProfileSO lowProfile = FindOrCreatePerformanceProfile(
-                HPFrameworkProjectPaths.LowPerformanceProfilePath,
-                PerformanceTier.Low,
-                30,
-                0,
-                0.7f);
-            PerformanceProfileSO mediumProfile = FindOrCreatePerformanceProfile(
-                HPFrameworkProjectPaths.MediumPerformanceProfilePath,
-                PerformanceTier.Medium,
-                60,
-                Mathf.Min(1, Mathf.Max(0, QualitySettings.names.Length - 1)),
-                1f);
-            PerformanceProfileSO highProfile = FindOrCreatePerformanceProfile(
-                HPFrameworkProjectPaths.HighPerformanceProfilePath,
-                PerformanceTier.High,
-                60,
-                Mathf.Max(0, QualitySettings.names.Length - 1),
-                1.25f);
-            PerformanceCatalogSO performanceCatalog = FindOrCreatePerformanceCatalog(
-                HPFrameworkProjectPaths.PerformanceCatalogPath,
-                lowProfile,
-                mediumProfile,
-                highProfile);
-            DevicePerformancePolicySO devicePerformancePolicy = FindOrCreateCanonicalAsset<DevicePerformancePolicySO>(
-                HPFrameworkProjectPaths.DevicePerformancePolicyPath);
-            if (audioLibrary != null && scopeAudioLibrary.objectReferenceValue == null)
-            {
-                scopeAudioLibrary.objectReferenceValue = audioLibrary;
-            }
-            if (uiCatalog != null && scopeUiCatalog.objectReferenceValue == null)
-            {
-                scopeUiCatalog.objectReferenceValue = uiCatalog;
-            }
-            if (performanceCatalog != null && scopePerformanceCatalog.objectReferenceValue == null)
-            {
-                scopePerformanceCatalog.objectReferenceValue = performanceCatalog;
-            }
-            if (devicePerformancePolicy != null && scopeDevicePerformancePolicy.objectReferenceValue == null)
-            {
-                scopeDevicePerformancePolicy.objectReferenceValue = devicePerformancePolicy;
-            }
-            scopeObject.ApplyModifiedProperties();
+            PerformanceCatalogSO performanceCatalog = LoadFrameworkDefault<PerformanceCatalogSO>(
+                HPFrameworkProjectPaths.PerformanceCatalogPath);
+            DevicePerformancePolicySO devicePerformancePolicy =
+                LoadFrameworkDefault<DevicePerformancePolicySO>(
+                    HPFrameworkProjectPaths.DevicePerformancePolicyPath);
 
-            AudioManager audioManager = GetReferencedComponent<AudioManager>(
-                scope,
-                "audioManager");
-            if (audioManager != null && audioLibrary != null)
+            SerializedObject scopeObject = new SerializedObject(scope);
+            SetReferenceIfMissing(scopeObject.FindProperty("audioLibrary"), audioLibrary);
+            SetReferenceIfMissing(scopeObject.FindProperty("uiCatalog"), uiCatalog);
+            SetReferenceIfMissing(scopeObject.FindProperty("performanceCatalog"), performanceCatalog);
+            SetReferenceIfMissing(
+                scopeObject.FindProperty("devicePerformancePolicy"),
+                devicePerformancePolicy);
+            scopeObject.ApplyModifiedProperties();
+            scopeObject.Update();
+
+            AudioLibrarySO effectiveAudioLibrary =
+                scopeObject.FindProperty("audioLibrary")?.objectReferenceValue as AudioLibrarySO
+                ?? audioLibrary;
+            UICatalogSO effectiveUiCatalog =
+                scopeObject.FindProperty("uiCatalog")?.objectReferenceValue as UICatalogSO
+                ?? uiCatalog;
+
+            AudioManager audioManager = GetReferencedComponent<AudioManager>(scope, "audioManager");
+            if (audioManager != null)
             {
                 SerializedObject audioObject = new SerializedObject(audioManager);
-                SerializedProperty libraryProperty = audioObject.FindProperty("audioLibrary");
-                if (libraryProperty.objectReferenceValue == null)
-                {
-                    libraryProperty.objectReferenceValue = audioLibrary;
-                    audioObject.ApplyModifiedProperties();
-                }
+                SetReferenceIfMissing(
+                    audioObject.FindProperty("audioLibrary"),
+                    effectiveAudioLibrary);
+                audioObject.ApplyModifiedProperties();
             }
 
-            UIManager uiManager = GetReferencedComponent<UIManager>(
-                scope,
-                "uiManager");
-            if (uiManager != null && uiCatalog != null)
+            UIManager uiManager = GetReferencedComponent<UIManager>(scope, "uiManager");
+            if (uiManager != null)
             {
                 SerializedObject uiObject = new SerializedObject(uiManager);
-                SerializedProperty catalogProperty = uiObject.FindProperty("uiCatalog");
-                if (catalogProperty.objectReferenceValue == null)
-                {
-                    catalogProperty.objectReferenceValue = uiCatalog;
-                    uiObject.ApplyModifiedProperties();
-                }
+                SetReferenceIfMissing(
+                    uiObject.FindProperty("uiCatalog"),
+                    effectiveUiCatalog);
+                uiObject.ApplyModifiedProperties();
             }
 
             AssetDatabase.SaveAssets();
-            Debug.Log("[HP Framework/VContainer] Project catalogs and performance defaults are linked.", scope);
+            Debug.Log(
+                "[HP Framework/VContainer] Missing references were restored from Git-tracked framework defaults. Existing project overrides were preserved.",
+                scope);
+        }
+
+        private static T LoadFrameworkDefault<T>(string path)
+            where T : UnityEngine.Object
+        {
+            T asset = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (asset == null)
+            {
+                Debug.LogError(
+                    $"[HP Framework/VContainer] Required framework default '{path}' is missing. Restore it from Git.");
+            }
+
+            return asset;
+        }
+
+        private static void SetReferenceIfMissing(
+            SerializedProperty property,
+            UnityEngine.Object defaultValue)
+        {
+            if (property != null
+                && property.objectReferenceValue == null
+                && defaultValue != null)
+            {
+                property.objectReferenceValue = defaultValue;
+            }
         }
 
         public static void AutoSetupDefaultRuntimeAssets(RootLifetimeScope scope)
@@ -856,130 +851,6 @@ namespace HP.Framework.Editor
             rectTransform.sizeDelta = Vector2.zero;
         }
 
-        private static PerformanceProfileSO FindOrCreatePerformanceProfile(
-            string path,
-            PerformanceTier tier,
-            int targetFrameRate,
-            int qualityLevel,
-            float lodBias)
-        {
-            PerformanceProfileSO existing = AssetDatabase.LoadAssetAtPath<PerformanceProfileSO>(path);
-            if (existing != null)
-            {
-                return existing;
-            }
-
-            PerformanceProfileSO profile = FindOrCreateCanonicalAsset<PerformanceProfileSO>(path);
-            SerializedObject profileObject = new SerializedObject(profile);
-            profileObject.FindProperty("tier").enumValueIndex = (int)tier;
-            profileObject.FindProperty("targetFrameRate").intValue = targetFrameRate;
-            profileObject.FindProperty("unityQualityLevel").intValue = qualityLevel;
-            profileObject.FindProperty("lodBias").floatValue = lodBias;
-            profileObject.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(profile);
-            return profile;
-        }
-
-        private static PerformanceCatalogSO FindOrCreatePerformanceCatalog(
-            string path,
-            params PerformanceProfileSO[] profiles)
-        {
-            PerformanceCatalogSO existing = AssetDatabase.LoadAssetAtPath<PerformanceCatalogSO>(path);
-            if (existing != null)
-            {
-                return existing;
-            }
-
-            PerformanceCatalogSO catalog = FindOrCreateCanonicalAsset<PerformanceCatalogSO>(path);
-            SerializedObject catalogObject = new SerializedObject(catalog);
-            SerializedProperty profilesProperty = catalogObject.FindProperty("profiles");
-            profilesProperty.arraySize = profiles.Length;
-            for (int i = 0; i < profiles.Length; i++)
-            {
-                profilesProperty.GetArrayElementAtIndex(i).objectReferenceValue = profiles[i];
-            }
-            catalogObject.FindProperty("defaultTier").enumValueIndex = (int)PerformanceTier.Medium;
-            catalogObject.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(catalog);
-            return catalog;
-        }
-
-        private static T FindOrCreateCanonicalAsset<T>(string path)
-            where T : ScriptableObject
-        {
-            T asset = AssetDatabase.LoadAssetAtPath<T>(path);
-            if (asset != null)
-            {
-                return asset;
-            }
-
-            string directory = Path.GetDirectoryName(path)?.Replace('\\', '/');
-            EnsureAssetFolder(directory);
-            asset = ScriptableObject.CreateInstance<T>();
-            AssetDatabase.CreateAsset(asset, path);
-            return asset;
-        }
-
-        private static T FindOrCreateAsset<T>(T currentAsset, string defaultPath)
-            where T : ScriptableObject
-        {
-            if (currentAsset != null)
-            {
-                return currentAsset;
-            }
-
-            T canonicalAsset = AssetDatabase.LoadAssetAtPath<T>(defaultPath);
-            if (canonicalAsset != null)
-            {
-                return canonicalAsset;
-            }
-
-            string[] guids = AssetDatabase.FindAssets($"t:{typeof(T).Name}");
-            if (guids.Length == 1)
-            {
-                string onlyPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                T onlyAsset = AssetDatabase.LoadAssetAtPath<T>(onlyPath);
-                if (onlyAsset != null)
-                {
-                    return onlyAsset;
-                }
-            }
-            else if (guids.Length > 1)
-            {
-                Debug.LogWarning(
-                    $"[HP Framework/VContainer] Found multiple {typeof(T).Name} assets. " +
-                    $"Repair will create/use the deterministic framework asset at '{defaultPath}' " +
-                    "instead of selecting an arbitrary project asset.");
-            }
-
-            string directory = Path.GetDirectoryName(defaultPath)?.Replace('\\', '/');
-            EnsureAssetFolder(directory);
-
-            T asset = ScriptableObject.CreateInstance<T>();
-            AssetDatabase.CreateAsset(asset, defaultPath);
-            AssetDatabase.SaveAssets();
-            return asset;
-        }
-
-        private static void EnsureAssetFolder(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return;
-            }
-
-            string[] segments = path.Split('/');
-            string current = segments[0];
-            for (int i = 1; i < segments.Length; i++)
-            {
-                string next = current + "/" + segments[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetDatabase.CreateFolder(current, segments[i]);
-                }
-                current = next;
-            }
-        }
     }
 }
 #endif

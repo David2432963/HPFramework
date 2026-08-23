@@ -26,7 +26,7 @@ Recordings/
 *.opendb
 *.VC.db
 
-# Framework-generated host-project assets
+# Legacy local outputs from pre-zero-setup versions; canonical Bootstrap/defaults are tracked under Runtime/.
 Generated/
 Generated.meta
 Settings/

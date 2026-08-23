@@ -26,8 +26,8 @@ namespace HP.Framework.Editor
             EditorGUILayout.Space(10f);
             EditorGUILayout.LabelField("HP Framework", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Setup keeps Bootstrap and default settings inside Assets/Plugins/HPFramework " +
-                "so the complete framework remains editable and versioned together during development.",
+                "HP Framework ships a Git-tracked, fully configured Bootstrap and framework defaults. " +
+                "Projects use prefab-instance overrides; Setup is optional validation/repair, not asset generation.",
                 MessageType.Info);
 
             EditorGUILayout.Space(8f);
@@ -41,12 +41,21 @@ namespace HP.Framework.Editor
             DrawStatus("VContainer settings", AssetDatabase.LoadAssetAtPath<VContainerSettings>(
                 HPFrameworkProjectPaths.VContainerSettingsPath) != null);
 
+            DrawStatus("Default AudioLibrary", AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
+                HPFrameworkProjectPaths.AudioLibraryPath) != null);
+            DrawStatus("Default UICatalog", AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
+                HPFrameworkProjectPaths.UICatalogPath) != null);
+            DrawStatus("Default PerformanceCatalog", AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(
+                HPFrameworkProjectPaths.PerformanceCatalogPath) != null);
+
             VContainerSettings[] preloadedSettings = PlayerSettings.GetPreloadedAssets()
                 .OfType<VContainerSettings>()
                 .ToArray();
-            DrawStatus("VContainer preloaded asset", preloadedSettings.Length == 1);
-            DrawStatus("Package Bootstrap template",
-                !string.IsNullOrWhiteSpace(HPFrameworkProjectPaths.BootstrapTemplatePath));
+            DrawStatus("VContainer preload compatible (optional)", preloadedSettings.Length <= 1);
+            DrawStatus("Canonical Bootstrap GUID", string.Equals(
+                HPFrameworkProjectPaths.CanonicalBootstrapPath,
+                HPFrameworkProjectPaths.BootstrapPath,
+                StringComparison.Ordinal));
             string loadingScenePath = HPFrameworkProjectPaths.LoadingScenePath;
             DrawStatus("Framework LoadingScene",
                 string.Equals(
@@ -60,7 +69,7 @@ namespace HP.Framework.Editor
             bool inputSystemAvailable = Type.GetType(
                 "UnityEngine.InputSystem.InputActionAsset, Unity.InputSystem",
                 throwOnError: false) != null;
-            DrawStatus("Unity Input System (optional)", inputSystemAvailable);
+            DrawStatus("Unity Input System", inputSystemAvailable);
             DrawStatus("Default UI input actions",
                 inputSystemAvailable
                 && !string.IsNullOrWhiteSpace(HPFrameworkProjectPaths.DefaultInputActionsPath));
@@ -76,7 +85,7 @@ namespace HP.Framework.Editor
                 MessageType.None);
 
             EditorGUILayout.Space(12f);
-            if (GUILayout.Button("Setup / Repair Missing References", GUILayout.Height(34f)))
+            if (GUILayout.Button("Repair Canonical Framework Defaults", GUILayout.Height(34f)))
             {
                 BootstrapPrefabCreator.CreateOrRepairBootstrap(
                     configureProjectRoot: true,
@@ -85,11 +94,11 @@ namespace HP.Framework.Editor
             }
 
             EditorGUILayout.HelpBox(
-                "Repair preserves existing camera, Canvas Scaler, layout, catalogs, Input Actions, and Toast customizations. " +
-                "Use Reset only when you explicitly want HP Framework defaults reapplied.",
+                "Scene prefab instances keep their own overrides. Inspector Repair only fills missing references and preserves valid project overrides. " +
+                "Use Reset here only when intentionally restoring the canonical framework prefab itself.",
                 MessageType.None);
 
-            if (GUILayout.Button("Reset Bootstrap To Framework Defaults", GUILayout.Height(26f)))
+            if (GUILayout.Button("Reset Canonical Bootstrap To Framework Defaults", GUILayout.Height(26f)))
             {
                 if (EditorUtility.DisplayDialog(
                         "Reset HP Framework Bootstrap",

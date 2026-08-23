@@ -9,44 +9,34 @@ namespace HP.Framework.Editor
     {
         public static string BootstrapPath => HPFrameworkProjectPaths.BootstrapPath;
 
-        [MenuItem("Tools/HP Framework/Create Bootstrap Prefab", false, 20)]
+        [MenuItem("Tools/HP Framework/Repair Canonical Bootstrap", false, 20)]
         public static void CreateBootstrapPrefab()
         {
             CreateOrRepairBootstrap(configureProjectRoot: true);
         }
 
+        /// <summary>
+        /// Repairs the Git-tracked canonical Bootstrap in place. The framework no longer generates
+        /// a host-project Bootstrap copy; consuming projects customize prefab instances through
+        /// scene overrides instead of applying project references back to the framework asset.
+        /// </summary>
         public static RootLifetimeScope CreateOrRepairBootstrap(
             bool configureProjectRoot,
             bool resetDefaults = false)
         {
-            EnsureFolder(HPFrameworkProjectPaths.GeneratedFolder);
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(BootstrapPath) == null)
+            {
+                throw new InvalidOperationException(
+                    $"Canonical HP Framework Bootstrap is missing at '{BootstrapPath}'. " +
+                    "Restore the framework asset and its .meta file from Git.");
+            }
 
-            bool hasExistingBootstrap =
-                AssetDatabase.LoadAssetAtPath<GameObject>(BootstrapPath) != null;
-            string sourcePath = hasExistingBootstrap
-                ? BootstrapPath
-                : HPFrameworkProjectPaths.BootstrapTemplatePath;
-
-            GameObject root = null;
-            bool loadedPrefabContents = false;
+            GameObject root = PrefabUtility.LoadPrefabContents(BootstrapPath);
             try
             {
-                if (!string.IsNullOrWhiteSpace(sourcePath)
-                    && AssetDatabase.LoadAssetAtPath<GameObject>(sourcePath) != null)
-                {
-                    root = PrefabUtility.LoadPrefabContents(sourcePath);
-                    loadedPrefabContents = true;
-                }
-                else
-                {
-                    root = new GameObject("Bootstrap");
-                }
-
                 RootLifetimeScope scope = root.GetComponent<RootLifetimeScope>()
                     ?? root.AddComponent<RootLifetimeScope>();
-                RootLifetimeScopeEditor.AutoSetupHierarchy(
-                    scope,
-                    resetDefaults || !hasExistingBootstrap);
+                RootLifetimeScopeEditor.AutoSetupHierarchy(scope, resetDefaults);
                 RootLifetimeScopeEditor.AutoSetupScriptableObjects(scope);
                 RootLifetimeScopeEditor.AutoSetupDefaultRuntimeAssets(scope);
 
@@ -54,7 +44,7 @@ namespace HP.Framework.Editor
                 if (prefab == null)
                 {
                     throw new InvalidOperationException(
-                        $"Unity failed to save Bootstrap prefab at '{BootstrapPath}'.");
+                        $"Unity failed to save canonical Bootstrap at '{BootstrapPath}'.");
                 }
 
                 RootLifetimeScope prefabScope = prefab.GetComponent<RootLifetimeScope>();
@@ -66,40 +56,12 @@ namespace HP.Framework.Editor
                 Selection.activeObject = prefab;
                 EditorGUIUtility.PingObject(prefab);
                 AssetDatabase.SaveAssets();
-                Debug.Log($"[HP Framework] Bootstrap ready at {BootstrapPath}");
+                Debug.Log($"[HP Framework] Canonical Bootstrap repaired at {BootstrapPath}");
                 return prefabScope;
             }
             finally
             {
-                if (root != null)
-                {
-                    if (loadedPrefabContents)
-                    {
-                        PrefabUtility.UnloadPrefabContents(root);
-                    }
-                    else
-                    {
-                        UnityEngine.Object.DestroyImmediate(root);
-                    }
-                }
-            }
-        }
-
-        private static void EnsureFolder(string path)
-        {
-            string normalized = path.Replace('\\', '/');
-            string[] segments = normalized.Split('/');
-            string current = segments[0];
-
-            for (int i = 1; i < segments.Length; i++)
-            {
-                string next = current + "/" + segments[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetDatabase.CreateFolder(current, segments[i]);
-                }
-
-                current = next;
+                PrefabUtility.UnloadPrefabContents(root);
             }
         }
     }

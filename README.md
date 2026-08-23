@@ -8,8 +8,7 @@ During active development, the framework is intended to live directly under `Ass
 
 - Unity 6 (`6000.0` or newer)
 - UGUI is required by the current UI/Graphics/Diagnostics stack
-- Input System is optional while the framework is consumed as editable source under `Assets/Plugins`; `HP.Framework.Input` is excluded when `com.unity.inputsystem` is absent
-- Future UPM installs declare Input System and UGUI through `package.json`
+- Input System and UGUI are required by the zero-setup canonical Bootstrap and are declared through `package.json`
 - VContainer, UniTask and a private Json.NET 13.0.4 build are bundled under `ThirdParty/`
 
 ## Development install
@@ -25,6 +24,8 @@ The framework keeps its asmdef boundaries and may keep its own nested Git reposi
 ```text
 Assets/Plugins/HPFramework/
 ├── Runtime/
+│   ├── Bootstrap/Prefabs/Bootstrap.prefab
+│   └── Defaults/
 ├── Editor/
 ├── Tests/
 ├── ThirdParty/
@@ -33,31 +34,32 @@ Assets/Plugins/HPFramework/
 └── package.json
 ```
 
-`Generated/` and `Settings/` are host-project outputs created by Setup and are intentionally excluded from the framework Git repository.
+The canonical Bootstrap and framework defaults are Git-tracked with stable GUIDs. A fresh clone does not generate framework assets per machine.
 
 ## Quick start
 
-1. Open `Tools > HP Framework > Setup`.
-2. Run **Setup / Repair Missing References**.
-3. Run **Validate Project**.
-4. Keep application/game code outside the framework repository, for example under `Assets/Game`.
+1. Place `Runtime/Bootstrap/Prefabs/Bootstrap.prefab` in the application entry scene.
+2. Keep project-specific customization as prefab-instance overrides in that scene.
+3. Press Play. The canonical Bootstrap already references valid default Audio/UI/Input/Performance assets.
+4. Optionally run `Tools > HP Framework > Setup` for validation/repair or project integration diagnostics.
+5. Keep application/game code outside the framework repository, for example under `Assets/Game`.
 
-Setup also adds and enables the framework-owned `LoadingScene` in Build Settings. Customize
+The Editor integration automatically adds and enables the framework-owned `LoadingScene` in Build Settings when needed. Customize
 its neutral UGUI presentation directly at
 `Runtime/Bootstrap/Loading/Scenes/LoadingScene.unity`; keep the scene name unchanged so the
 default `GameSceneManager` configuration can load it.
 
-Normal **Repair** is non-destructive: it fills missing objects/references while preserving existing manager ownership, camera settings, Canvas Scaler values, layout, catalogs, Input Actions and Toast assignments.
+Normal **Repair** is non-destructive: it fills missing objects/references while preserving existing manager ownership, camera settings, Canvas Scaler values, layout, catalogs, Input Actions and Toast assignments. On a scene prefab instance, project overrides remain on the instance and are never applied back to HP Framework automatically.
 
-Use **Reset Bootstrap To Framework Defaults** only when you intentionally want the canonical HP Framework hierarchy and defaults restored.
+Use **Reset Canonical Bootstrap To Framework Defaults** only when you intentionally want to restore the framework-owned prefab itself.
 
-Setup creates or repairs:
+HP Framework ships these canonical assets directly:
 
 ```text
-Assets/Plugins/HPFramework/
-├── Generated/
+Assets/Plugins/HPFramework/Runtime/
+├── Bootstrap/Prefabs/
 │   └── Bootstrap.prefab
-└── Settings/
+└── Defaults/
     ├── VContainerSettings.asset
     ├── DefaultAudioLibrary.asset
     ├── DefaultUICatalog.asset
@@ -69,7 +71,7 @@ Assets/Plugins/HPFramework/
         └── DevicePerformancePolicy.asset
 ```
 
-The reusable Bootstrap source remains tracked at `Editor/Templates/Bootstrap.prefab`.
+Framework assets must never reference consuming-project assets. Projects customize Bootstrap through scene/prefab-instance overrides.
 
 ## Default Bootstrap
 

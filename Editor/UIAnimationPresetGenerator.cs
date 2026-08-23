@@ -13,7 +13,7 @@ namespace HP.Framework.Editor.UI
         [MenuItem("Tools/HP Framework/UI/Create Default Popup Fade Scale Preset", false, 40)]
         public static void CreateDefaultPopupPreset()
         {
-            EnsureFolder(HPFrameworkProjectPaths.SettingsFolder, "UIAnimationPresets");
+            EnsureFolder(HPFrameworkProjectPaths.DefaultsFolder, "UIAnimationPresets");
 
             UIAnimationPresetSO preset =
                 AssetDatabase.LoadAssetAtPath<UIAnimationPresetSO>(AssetPath);

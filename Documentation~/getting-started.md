@@ -10,17 +10,17 @@ Assets/Plugins/HPFramework
 
 Keep game-specific code outside the framework repository, for example under `Assets/Game`.
 
-## 2. Run setup
+## 2. Use the canonical Bootstrap
 
-Open:
+Drag this Git-tracked prefab into the application entry scene:
 
 ```text
-Tools > HP Framework > Setup
+Assets/Plugins/HPFramework/Runtime/Bootstrap/Prefabs/Bootstrap.prefab
 ```
 
-Run **Setup / Repair Missing References**, then **Validate Project**.
+It already references valid default AudioLibrary, UICatalog, Input Actions and Performance assets. Project customization should be stored as prefab-instance overrides in the scene.
 
-Setup adds and enables the framework-owned loading scene in Build Settings. Its default UGUI
+The Editor integration adds and enables the framework-owned loading scene in Build Settings when needed. Its default UGUI
 layout can be customized at:
 
 ```text
@@ -31,20 +31,13 @@ Keep the scene named `LoadingScene`. An empty `GameSceneManager.loadingSceneName
 disables loading-scene presentation; any configured name must resolve to an enabled Build
 Settings scene.
 
-Setup creates or repairs the local Bootstrap and default settings under:
-
-```text
-Assets/Plugins/HPFramework/Generated
-Assets/Plugins/HPFramework/Settings
-```
-
-These are host-project outputs and are intentionally ignored by the framework Git repository; reusable source/templates remain tracked.
+No per-machine Bootstrap/default generation is required. `Tools > HP Framework > Setup` remains available for optional validation and repair.
 
 ## 3. Understand Repair vs Reset
 
 Normal **Repair** is non-destructive. It fills missing hierarchy objects/references while preserving existing ownership and user configuration.
 
-Use **Reset Bootstrap To Framework Defaults** only when you intentionally want to migrate/restore the canonical Bootstrap:
+Use **Reset Canonical Bootstrap To Framework Defaults** only when you intentionally want to restore the framework-owned canonical Bootstrap:
 
 ```text
 Bootstrap                         RootLifetimeScope
@@ -99,7 +92,7 @@ When URP is available, HP Framework configures the framework `UICamera` as Overl
 
 The attachment is retried on scene load, so replacing the gameplay camera between Loading/Menu/Gameplay scenes is supported. The gameplay camera must use the `MainCamera` tag.
 
-The reusable Bootstrap template does not need to serialize URP camera data itself; Setup/runtime apply URP-specific configuration only when URP is present.
+The canonical Bootstrap does not serialize URP camera data. Runtime/editor integration adds URP-specific camera data only when URP is present, keeping the prefab project-agnostic.
 
 ## Next steps
 

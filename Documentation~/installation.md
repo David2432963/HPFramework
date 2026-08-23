@@ -10,11 +10,18 @@ Assets/Plugins/HPFramework/
 
 This is the preferred workflow while the framework is still evolving because runtime/editor source remains immediately editable, debuggable and visible in the consuming project. The framework may keep its own nested `.git` directory; Unity ignores it while Git continues to treat `Assets/Plugins/HPFramework` as an independent repository.
 
-The expected source layout is:
+The expected source layout includes the canonical runtime assets:
 
 ```text
 Assets/Plugins/HPFramework/
 ├── Runtime/
+│   ├── Bootstrap/Prefabs/Bootstrap.prefab
+│   ├── Bootstrap/Loading/Scenes/LoadingScene.unity
+│   └── Defaults/
+│       ├── VContainerSettings.asset
+│       ├── DefaultAudioLibrary.asset
+│       ├── DefaultUICatalog.asset
+│       └── Performance/
 ├── Editor/
 ├── Tests/
 ├── ThirdParty/
@@ -23,19 +30,7 @@ Assets/Plugins/HPFramework/
 └── package.json
 ```
 
-Setup creates host-project outputs beside the editable source:
-
-```text
-Assets/Plugins/HPFramework/
-├── Generated/
-│   └── Bootstrap.prefab
-└── Settings/
-    ├── VContainerSettings.asset
-    ├── DefaultAudioLibrary.asset
-    └── DefaultUICatalog.asset
-```
-
-`Generated/` and `Settings/` are intentionally excluded from the framework Git repository because they are generated/project-specific. The reusable Bootstrap source stays versioned at `Editor/Templates/Bootstrap.prefab`.
+These assets are versioned with stable Unity GUIDs. HP Framework no longer generates a per-machine Bootstrap or default-settings copy.
 
 ## Requirements
 
@@ -46,24 +41,17 @@ Current dependency rules:
 - UGUI is required by the current UI/Graphics/Diagnostics stack.
 - VContainer and UniTask are bundled under `ThirdParty/`.
 - Json.NET 13.0.4 is bundled as the private `HP.Framework.NewtonsoftJson` assembly for internal framework extension use.
-- Input System is optional while the framework is consumed directly from `Assets/Plugins`. `HP.Framework.Input` uses a package version define and is excluded when `com.unity.inputsystem` is absent.
-- Editor/Bootstrap setup avoids a hard compile-time dependency on the optional Input assembly.
+- Input System and UGUI are required by the zero-setup canonical Bootstrap and are declared in `package.json`.
 
-`package.json` still declares Input System and UGUI for future UPM consumption. When the framework is placed under `Assets/Plugins`, Package Manager metadata does not automatically install those dependencies.
+When the repository is consumed directly under `Assets/Plugins`, the consuming Unity project must have those declared packages available.
 
-## First project setup
+## First project use
 
-After placing the framework under `Assets/Plugins`, open:
+After placing the framework under `Assets/Plugins`, drag `Runtime/Bootstrap/Prefabs/Bootstrap.prefab` into the application entry scene. The prefab is already wired to valid framework-owned Audio/UI/Input/Performance defaults.
 
-```text
-Tools > HP Framework > Setup
-```
+Project-specific configuration belongs on that prefab instance. For example, a game may override the instance's `UICatalog` or `InputActionAsset`; those overrides are serialized by the scene and must not be applied back to the framework prefab.
 
-For normal setup or repair, use **Setup / Repair Missing References**. Repair is intentionally non-destructive: it fills missing references/objects while preserving existing manager ownership, camera settings, Canvas Scaler values, layout, catalogs, Input Actions and Toast assignments.
-
-Use **Reset Bootstrap To Framework Defaults** only when you intentionally want HP Framework to restore its canonical domain-owned Bootstrap hierarchy and stock defaults.
-
-After setup, run **Validate Project**.
+`Tools > HP Framework > Setup` is optional. Use it for validation, repair, diagnostics or explicit project integration. Normal Repair fills only missing references and preserves valid project overrides.
 
 ## Future package distribution
 

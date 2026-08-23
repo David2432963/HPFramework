@@ -1,28 +1,24 @@
 # Troubleshooting
 
-## Package compiles but the project is not configured
+## Package compiles but the entry scene has no framework root
 
-Open `Tools > HP Framework > Setup` and run **Setup / Repair Missing References**.
+Place `Runtime/Bootstrap/Prefabs/Bootstrap.prefab` in the application entry scene. No generated Bootstrap is required.
 
-Normal Repair does not overwrite existing UICamera/Canvas Scaler values, manager ownership, layout, catalogs, Input Actions or Toast assignments.
+Normal Repair does not overwrite existing UICamera/Canvas Scaler values, manager ownership, layout, catalogs, Input Actions or Toast assignments on a project prefab instance.
 
-If you intentionally want the canonical domain-owned Bootstrap hierarchy (`Audio`, `UI`, `Input`, `Scene`, `Pools`, `Haptics`) and stock defaults, use **Reset Bootstrap To Framework Defaults**.
+If you intentionally want to restore the framework-owned canonical hierarchy (`Audio`, `UI`, `Input`, `Scene`, `Pools`, `Haptics`) and stock defaults, use **Reset Canonical Bootstrap To Framework Defaults**.
 
 ## Bootstrap hierarchy still looks like the legacy layout
 
 This can be expected after normal Repair because Repair is non-destructive and preserves existing ownership.
 
-To intentionally migrate to the current canonical hierarchy, run **Reset Bootstrap To Framework Defaults**.
+To intentionally migrate to the current canonical hierarchy, run **Reset Canonical Bootstrap To Framework Defaults**.
 
-If a Bootstrap prefab stage is currently open and dirty in the Unity Editor, do not blindly save it over a newly generated/migrated prefab. Close/reconcile that stage first so stale prefab-stage contents do not overwrite the on-disk Bootstrap.
+If a Bootstrap prefab stage is currently open and dirty in the Unity Editor, reconcile it before restoring the canonical asset. Project-specific values should live on prefab instances, not be applied to the framework prefab.
 
 ## Input System is not installed
 
-In editable `Assets/Plugins` development mode, `HP.Framework.Input` is optional and is excluded when `com.unity.inputsystem` is absent.
-
-Install Input System when the project needs `InputManager`. The rest of the framework should not fail compilation solely because that optional module is missing.
-
-UGUI remains required by the current framework UI stack.
+The zero-setup canonical Bootstrap requires Input System and UGUI. Both are declared in `package.json`. Install the declared dependencies before using the canonical Bootstrap.
 
 ## Asset-key UI throws from a synchronous API
 
@@ -32,11 +28,9 @@ This is intentional. `ShowScreen<T>()` and `OpenPopup<T>()` support direct-prefa
 
 Asset-key audio requires `IAssetLeaseProvider` from the root scope. Diagnostics renders unsupported `ProfilerRecorder`/`FrameTimingManager` counters and absent optional Input diagnostics as `n/a` rather than throwing.
 
-## EventSystem has no input module in the reusable template
+## EventSystem input actions look empty in the prefab YAML
 
-This is intentional. The reusable Bootstrap template keeps optional package components out of the serialized template where required for import safety.
-
-Setup/Reset configures the project-appropriate EventSystem input module when generating/repairing the project Bootstrap.
+The canonical Bootstrap contains `InputSystemUIInputModule`. If its serialized action references are empty, Input System assigns its default UI actions on enable. HP Framework's `InputManager` separately references the tracked `BaseUIInputActions` asset.
 
 ## UI camera is not visible through the gameplay camera
 
@@ -46,18 +40,18 @@ When URP is present, HP Framework configures the gameplay camera as Base, the fr
 
 If the renderer does not expose a usable camera stack yet, the helper fails safely and can retry during later scene initialization/scene load.
 
-The reusable template itself does not need to serialize URP camera data; URP-specific components/configuration are added only when URP is available.
+The canonical Bootstrap itself does not serialize URP camera data; URP-specific components/configuration are added only when URP is available.
 
-## Bootstrap/settings are missing
+## Bootstrap/default settings are missing
 
-Run Setup again. It recreates/repairs project outputs under:
+They are canonical Git-tracked framework assets. Restore the missing files and `.meta` files from Git under:
 
 ```text
-Assets/Plugins/HPFramework/Generated
-Assets/Plugins/HPFramework/Settings
+Assets/Plugins/HPFramework/Runtime/Bootstrap/Prefabs
+Assets/Plugins/HPFramework/Runtime/Defaults
 ```
 
-The canonical reusable Bootstrap source remains at `Editor/Templates/Bootstrap.prefab`.
+Do not regenerate replacement assets with new GUIDs on each machine.
 
 ## Duplicate VContainer or UniTask assemblies
 
