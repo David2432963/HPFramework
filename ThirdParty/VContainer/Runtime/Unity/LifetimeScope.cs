@@ -303,11 +303,11 @@ namespace VContainer.Unity
                 }
             }
 
-            // The root scope may register its concrete type in Configure. Registering the same
-            // instance again as LifetimeScope creates a duplicate singleton implementation in
-            // this VContainer fork. Child scopes still need the base registration for parent
-            // scope resolution.
-            if (Parent != null)
+            // A custom scope may explicitly register its concrete instance in Configure().
+            // Registering that same implementation again as LifetimeScope creates a duplicate
+            // singleton implementation in this VContainer fork. Normal scopes that do not
+            // self-register still receive the standard LifetimeScope registration.
+            if (!builder.Exists(GetType()))
             {
                 builder.RegisterInstance<LifetimeScope>(this).AsSelf();
             }

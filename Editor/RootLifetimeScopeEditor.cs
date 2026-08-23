@@ -6,6 +6,7 @@ using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
 using HP.Framework.Haptics;
 using HP.Framework.Lifecycle;
+using HP.Framework.Performance;
 using HP.Framework.Pooling;
 using HP.Framework.UI;
 using UnityEditor;
@@ -102,6 +103,7 @@ namespace HP.Framework.Editor
             GameObject rootGo = scope.gameObject;
             Transform bootstrapRoot = rootGo.transform;
             Undo.RegisterFullObjectHierarchyUndo(rootGo, "Auto Setup Bootstrap Hierarchy");
+            RemoveMissingScripts(bootstrapRoot);
 
             SerializedObject scopeObject = new SerializedObject(scope);
             ApplicationLifecycleService applicationLifecycle =
@@ -290,6 +292,8 @@ namespace HP.Framework.Editor
             SerializedObject scopeObject = new SerializedObject(scope);
             SerializedProperty scopeAudioLibrary = scopeObject.FindProperty("audioLibrary");
             SerializedProperty scopeUiCatalog = scopeObject.FindProperty("uiCatalog");
+            SerializedProperty scopePerformanceCatalog = scopeObject.FindProperty("performanceCatalog");
+            SerializedProperty scopeDevicePerformancePolicy = scopeObject.FindProperty("devicePerformancePolicy");
 
             AudioLibrarySO audioLibrary = FindOrCreateAsset(
                 scopeAudioLibrary.objectReferenceValue as AudioLibrarySO,
@@ -297,6 +301,31 @@ namespace HP.Framework.Editor
             UICatalogSO uiCatalog = FindOrCreateAsset(
                 scopeUiCatalog.objectReferenceValue as UICatalogSO,
                 HPFrameworkProjectPaths.UICatalogPath);
+            PerformanceProfileSO lowProfile = FindOrCreatePerformanceProfile(
+                HPFrameworkProjectPaths.LowPerformanceProfilePath,
+                PerformanceTier.Low,
+                30,
+                0,
+                0.7f);
+            PerformanceProfileSO mediumProfile = FindOrCreatePerformanceProfile(
+                HPFrameworkProjectPaths.MediumPerformanceProfilePath,
+                PerformanceTier.Medium,
+                60,
+                Mathf.Min(1, Mathf.Max(0, QualitySettings.names.Length - 1)),
+                1f);
+            PerformanceProfileSO highProfile = FindOrCreatePerformanceProfile(
+                HPFrameworkProjectPaths.HighPerformanceProfilePath,
+                PerformanceTier.High,
+                60,
+                Mathf.Max(0, QualitySettings.names.Length - 1),
+                1.25f);
+            PerformanceCatalogSO performanceCatalog = FindOrCreatePerformanceCatalog(
+                HPFrameworkProjectPaths.PerformanceCatalogPath,
+                lowProfile,
+                mediumProfile,
+                highProfile);
+            DevicePerformancePolicySO devicePerformancePolicy = FindOrCreateCanonicalAsset<DevicePerformancePolicySO>(
+                HPFrameworkProjectPaths.DevicePerformancePolicyPath);
             if (audioLibrary != null && scopeAudioLibrary.objectReferenceValue == null)
             {
                 scopeAudioLibrary.objectReferenceValue = audioLibrary;
@@ -304,6 +333,14 @@ namespace HP.Framework.Editor
             if (uiCatalog != null && scopeUiCatalog.objectReferenceValue == null)
             {
                 scopeUiCatalog.objectReferenceValue = uiCatalog;
+            }
+            if (performanceCatalog != null && scopePerformanceCatalog.objectReferenceValue == null)
+            {
+                scopePerformanceCatalog.objectReferenceValue = performanceCatalog;
+            }
+            if (devicePerformancePolicy != null && scopeDevicePerformancePolicy.objectReferenceValue == null)
+            {
+                scopeDevicePerformancePolicy.objectReferenceValue = devicePerformancePolicy;
             }
             scopeObject.ApplyModifiedProperties();
 
@@ -336,7 +373,7 @@ namespace HP.Framework.Editor
             }
 
             AssetDatabase.SaveAssets();
-            Debug.Log("[HP Framework/VContainer] Project AudioLibrarySO and UICatalogSO are linked.", scope);
+            Debug.Log("[HP Framework/VContainer] Project catalogs and performance defaults are linked.", scope);
         }
 
         public static void AutoSetupDefaultRuntimeAssets(RootLifetimeScope scope)
@@ -395,19 +432,28 @@ namespace HP.Framework.Editor
             var activeScene = EditorSceneManager.GetActiveScene();
             var scenes = EditorBuildSettings.scenes.ToList();
 
-            bool added = false;
+            int removedMissing = scenes.RemoveAll(scene =>
+                string.IsNullOrWhiteSpace(scene.path)
+                || AssetDatabase.LoadAssetAtPath<SceneAsset>(scene.path) == null);
+            bool changed = removedMissing > 0;
+
             if (!string.IsNullOrEmpty(activeScene.path)
                 && !scenes.Any(scene => scene.path == activeScene.path))
             {
                 scenes.Add(new EditorBuildSettingsScene(activeScene.path, true));
-                added = true;
+                changed = true;
             }
 
-            added |= EnsureLoadingSceneInBuildSettings(scenes);
+            changed |= EnsureLoadingSceneInBuildSettings(scenes);
 
-            if (added)
+            if (changed)
             {
                 EditorBuildSettings.scenes = scenes.ToArray();
+                if (removedMissing > 0)
+                {
+                    Debug.LogWarning(
+                        $"[HP Framework/VContainer] Removed {removedMissing} missing scene entr{(removedMissing == 1 ? "y" : "ies")} from Build Settings.");
+                }
                 Debug.Log("[HP Framework/VContainer] Build Settings updated.");
             }
             else
@@ -454,6 +500,24 @@ namespace HP.Framework.Editor
 
             scenes[sceneIndex].enabled = true;
             return true;
+        }
+
+        private static void RemoveMissingScripts(Transform root)
+        {
+            Transform[] hierarchy = root.GetComponentsInChildren<Transform>(true);
+            int removed = 0;
+            for (int i = 0; i < hierarchy.Length; i++)
+            {
+                removed += GameObjectUtility.RemoveMonoBehavioursWithMissingScript(
+                    hierarchy[i].gameObject);
+            }
+
+            if (removed > 0)
+            {
+                Debug.LogWarning(
+                    $"[HP Framework/VContainer] Removed {removed} missing script component(s) while repairing Bootstrap.",
+                    root);
+            }
         }
 
         private static T GetOrAddComponent<T>(GameObject gameObject) where T : Component
@@ -790,6 +854,70 @@ namespace HP.Framework.Editor
             rectTransform.anchorMax = Vector2.one;
             rectTransform.anchoredPosition = Vector2.zero;
             rectTransform.sizeDelta = Vector2.zero;
+        }
+
+        private static PerformanceProfileSO FindOrCreatePerformanceProfile(
+            string path,
+            PerformanceTier tier,
+            int targetFrameRate,
+            int qualityLevel,
+            float lodBias)
+        {
+            PerformanceProfileSO existing = AssetDatabase.LoadAssetAtPath<PerformanceProfileSO>(path);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            PerformanceProfileSO profile = FindOrCreateCanonicalAsset<PerformanceProfileSO>(path);
+            SerializedObject profileObject = new SerializedObject(profile);
+            profileObject.FindProperty("tier").enumValueIndex = (int)tier;
+            profileObject.FindProperty("targetFrameRate").intValue = targetFrameRate;
+            profileObject.FindProperty("unityQualityLevel").intValue = qualityLevel;
+            profileObject.FindProperty("lodBias").floatValue = lodBias;
+            profileObject.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(profile);
+            return profile;
+        }
+
+        private static PerformanceCatalogSO FindOrCreatePerformanceCatalog(
+            string path,
+            params PerformanceProfileSO[] profiles)
+        {
+            PerformanceCatalogSO existing = AssetDatabase.LoadAssetAtPath<PerformanceCatalogSO>(path);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            PerformanceCatalogSO catalog = FindOrCreateCanonicalAsset<PerformanceCatalogSO>(path);
+            SerializedObject catalogObject = new SerializedObject(catalog);
+            SerializedProperty profilesProperty = catalogObject.FindProperty("profiles");
+            profilesProperty.arraySize = profiles.Length;
+            for (int i = 0; i < profiles.Length; i++)
+            {
+                profilesProperty.GetArrayElementAtIndex(i).objectReferenceValue = profiles[i];
+            }
+            catalogObject.FindProperty("defaultTier").enumValueIndex = (int)PerformanceTier.Medium;
+            catalogObject.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(catalog);
+            return catalog;
+        }
+
+        private static T FindOrCreateCanonicalAsset<T>(string path)
+            where T : ScriptableObject
+        {
+            T asset = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (asset != null)
+            {
+                return asset;
+            }
+
+            string directory = Path.GetDirectoryName(path)?.Replace('\\', '/');
+            EnsureAssetFolder(directory);
+            asset = ScriptableObject.CreateInstance<T>();
+            AssetDatabase.CreateAsset(asset, path);
+            return asset;
         }
 
         private static T FindOrCreateAsset<T>(T currentAsset, string defaultPath)

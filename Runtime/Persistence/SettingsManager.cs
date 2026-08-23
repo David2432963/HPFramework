@@ -29,6 +29,8 @@
         private float sensitivity;
         private int targetFrameRate;
         private int qualityLevel;
+        private bool useAutomaticPerformanceTier;
+        private int preferredPerformanceTier;
         private bool initialized;
         private bool dirty;
 
@@ -89,37 +91,45 @@
             }
         }
 
+        /// <summary>
+        /// Compatibility preference only. Runtime frame-rate application is owned by PerformanceService.
+        /// </summary>
         public int TargetFrameRate
         {
             get => targetFrameRate;
             set
             {
                 int normalized = value == 0 ? -1 : value;
-                if (!SetValue(ref targetFrameRate, normalized, nameof(TargetFrameRate),
-                        v => store.SetInt(nameof(TargetFrameRate), v, BaseConstants.SettingsSection)))
-                {
-                    return;
-                }
-
-                Application.targetFrameRate = normalized;
+                SetValue(ref targetFrameRate, normalized, nameof(TargetFrameRate),
+                    v => store.SetInt(nameof(TargetFrameRate), v, BaseConstants.SettingsSection));
             }
         }
 
+        /// <summary>
+        /// Compatibility preference only. Runtime quality application is owned by PerformanceService.
+        /// </summary>
         public int QualityLevel
         {
             get => qualityLevel;
             set
             {
-                int maxLevel = Mathf.Max(0, QualitySettings.names.Length - 1);
-                int clamped = Mathf.Clamp(value, 0, maxLevel);
-                if (!SetValue(ref qualityLevel, clamped, nameof(QualityLevel),
-                        v => store.SetInt(nameof(QualityLevel), v, BaseConstants.SettingsSection)))
-                {
-                    return;
-                }
-
-                QualitySettings.SetQualityLevel(clamped, true);
+                SetValue(ref qualityLevel, value, nameof(QualityLevel),
+                    v => store.SetInt(nameof(QualityLevel), v, BaseConstants.SettingsSection));
             }
+        }
+
+        public bool UseAutomaticPerformanceTier
+        {
+            get => useAutomaticPerformanceTier;
+            set => SetValue(ref useAutomaticPerformanceTier, value, nameof(UseAutomaticPerformanceTier),
+                v => store.SetBool(nameof(UseAutomaticPerformanceTier), v, BaseConstants.SettingsSection));
+        }
+
+        public int PreferredPerformanceTier
+        {
+            get => preferredPerformanceTier;
+            set => SetValue(ref preferredPerformanceTier, value, nameof(PreferredPerformanceTier),
+                v => store.SetInt(nameof(PreferredPerformanceTier), v, BaseConstants.SettingsSection));
         }
 
         public void Initialize()
@@ -144,23 +154,20 @@
 
             targetFrameRate = store.GetInt(
                 nameof(TargetFrameRate), 60, BaseConstants.SettingsSection);
-            int maxQualityLevel = Mathf.Max(0, QualitySettings.names.Length - 1);
-            qualityLevel = Mathf.Clamp(
-                store.GetInt(
-                    nameof(QualityLevel),
-                    QualitySettings.GetQualityLevel(),
-                    BaseConstants.SettingsSection),
-                0,
-                maxQualityLevel);
+            qualityLevel = store.GetInt(
+                nameof(QualityLevel), 0, BaseConstants.SettingsSection);
+            useAutomaticPerformanceTier = store.GetBool(
+                nameof(UseAutomaticPerformanceTier), true, BaseConstants.SettingsSection);
+            preferredPerformanceTier = store.GetInt(
+                nameof(PreferredPerformanceTier), 1, BaseConstants.SettingsSection);
 
-            Application.targetFrameRate = targetFrameRate;
-            QualitySettings.SetQualityLevel(qualityLevel, true);
             initialized = true;
             dirty = false;
         }
 
         public void Save()
         {
+            PersistCachedValues();
             store.Save();
             dirty = false;
         }
@@ -186,6 +193,20 @@
             {
                 SettingChanged = null;
             }
+        }
+
+        private void PersistCachedValues()
+        {
+            store.SetBool(nameof(SoundEnabled), soundEnabled, BaseConstants.SettingsSection);
+            store.SetBool(nameof(MusicEnabled), musicEnabled, BaseConstants.SettingsSection);
+            store.SetFloat(nameof(SoundVolume), soundVolume, BaseConstants.SettingsSection);
+            store.SetFloat(nameof(MusicVolume), musicVolume, BaseConstants.SettingsSection);
+            store.SetBool(nameof(VibrationEnabled), vibrationEnabled, BaseConstants.SettingsSection);
+            store.SetFloat(nameof(Sensitivity), sensitivity, BaseConstants.SettingsSection);
+            store.SetInt(nameof(TargetFrameRate), targetFrameRate, BaseConstants.SettingsSection);
+            store.SetInt(nameof(QualityLevel), qualityLevel, BaseConstants.SettingsSection);
+            store.SetBool(nameof(UseAutomaticPerformanceTier), useAutomaticPerformanceTier, BaseConstants.SettingsSection);
+            store.SetInt(nameof(PreferredPerformanceTier), preferredPerformanceTier, BaseConstants.SettingsSection);
         }
 
         private bool SetValue<T>(

@@ -2,6 +2,9 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+using System.Threading;
+using Cysharp.Threading.Tasks;
+
 namespace HP.Framework.Pooling
 {
     /// <summary>
@@ -15,13 +18,15 @@ namespace HP.Framework.Pooling
         {
             private readonly GameObject prefab;
             private readonly Transform poolParent;
-            private readonly int capacity;
+            private int capacity;
             private readonly Stack<GameObject> inactive = new Stack<GameObject>();
             private readonly HashSet<GameObject> inactiveSet = new HashSet<GameObject>();
             private readonly HashSet<GameObject> allInstances = new HashSet<GameObject>();
             private readonly Dictionary<GameObject, IPoolable[]> poolablesByInstance =
                 new Dictionary<GameObject, IPoolable[]>();
             private readonly Func<GameObject, Transform, GameObject> instantiate;
+            private int createdTotal;
+            private int trimmedTotal;
 
             public GameObjectPool(
                 GameObject prefab,
@@ -31,9 +36,16 @@ namespace HP.Framework.Pooling
             {
                 this.prefab = prefab;
                 this.poolParent = poolParent;
-                this.capacity = Mathf.Max(1, capacity);
+                this.capacity = Mathf.Max(0, capacity);
                 this.instantiate = instantiate;
             }
+
+            public GameObject Prefab => prefab;
+            public int Capacity => capacity;
+            public int ActiveCount => allInstances.Count - inactiveSet.Count;
+            public int InactiveCount => inactiveSet.Count;
+            public int CreatedTotal => createdTotal;
+            public int TrimmedTotal => trimmedTotal;
 
             public GameObject Get(Transform parent)
             {
@@ -54,6 +66,7 @@ namespace HP.Framework.Pooling
                     }
 
                     allInstances.Add(instance);
+                    createdTotal++;
                     CachePoolables(instance);
                 }
                 else
@@ -66,28 +79,30 @@ namespace HP.Framework.Pooling
                 return instance;
             }
 
-            public IEnumerable<GameObject> Prewarm(int count)
+            public int GetPrewarmCreateCount(int count)
             {
-                int createCount = Mathf.Max(
+                return Mathf.Max(
                     0,
                     Mathf.Min(count, capacity) - inactiveSet.Count);
-                for (int i = 0; i < createCount; i++)
-                {
-                    GameObject instance = instantiate(prefab, poolParent);
-                    if (instance == null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Failed to prewarm pooled prefab '{prefab.name}'.");
-                    }
+            }
 
-                    allInstances.Add(instance);
-                    CachePoolables(instance);
-                    InvokePoolables(instance, spawning: false);
-                    instance.SetActive(false);
-                    inactive.Push(instance);
-                    inactiveSet.Add(instance);
-                    yield return instance;
+            public GameObject PrewarmOne()
+            {
+                GameObject instance = instantiate(prefab, poolParent);
+                if (instance == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to prewarm pooled prefab '{prefab.name}'.");
                 }
+
+                allInstances.Add(instance);
+                createdTotal++;
+                CachePoolables(instance);
+                InvokePoolables(instance, spawning: false);
+                instance.SetActive(false);
+                inactive.Push(instance);
+                inactiveSet.Add(instance);
+                return instance;
             }
 
             public bool Release(GameObject instance)
@@ -109,7 +124,8 @@ namespace HP.Framework.Pooling
                 {
                     allInstances.Remove(instance);
                     poolablesByInstance.Remove(instance);
-                    UnityEngine.Object.Destroy(instance);
+                    trimmedTotal++;
+                    DestroyOwnedObject(instance);
                     return false;
                 }
 
@@ -119,13 +135,48 @@ namespace HP.Framework.Pooling
                 return true;
             }
 
+            public void SetCapacity(int maxInactiveCount, Action<GameObject> onTrimmed)
+            {
+                capacity = Mathf.Max(0, maxInactiveCount);
+                Trim(capacity, onTrimmed);
+            }
+
+            public void Trim(int targetInactiveCount, Action<GameObject> onTrimmed)
+            {
+                int target = Mathf.Max(0, targetInactiveCount);
+                while (inactive.Count > target)
+                {
+                    GameObject instance = inactive.Pop();
+                    inactiveSet.Remove(instance);
+                    allInstances.Remove(instance);
+                    poolablesByInstance.Remove(instance);
+                    onTrimmed?.Invoke(instance);
+                    trimmedTotal++;
+                    if (instance != null)
+                    {
+                        DestroyOwnedObject(instance);
+                    }
+                }
+            }
+
+            public PoolStats GetStats()
+            {
+                return new PoolStats(
+                    prefab,
+                    capacity,
+                    ActiveCount,
+                    InactiveCount,
+                    createdTotal,
+                    trimmedTotal);
+            }
+
             public void Clear()
             {
                 foreach (GameObject instance in allInstances)
                 {
                     if (instance != null)
                     {
-                        UnityEngine.Object.Destroy(instance);
+                        DestroyOwnedObject(instance);
                     }
                 }
 
@@ -136,7 +187,7 @@ namespace HP.Framework.Pooling
 
                 if (poolParent != null)
                 {
-                    UnityEngine.Object.Destroy(poolParent.gameObject);
+                    DestroyOwnedObject(poolParent.gameObject);
                 }
             }
 
@@ -206,6 +257,8 @@ namespace HP.Framework.Pooling
             new Dictionary<GameObject, GameObjectPool>();
         private readonly Dictionary<GameObject, GameObjectPool> instanceToPool =
             new Dictionary<GameObject, GameObjectPool>();
+        private readonly Dictionary<GameObject, int> capacityOverrides =
+            new Dictionary<GameObject, int>();
 
         private bool disposed;
 
@@ -291,10 +344,119 @@ namespace HP.Framework.Pooling
             }
 
             GameObjectPool pool = GetOrCreatePool(prefab);
-            foreach (GameObject instance in pool.Prewarm(count))
+            int createCount = pool.GetPrewarmCreateCount(count);
+            for (int i = 0; i < createCount; i++)
             {
+                GameObject instance = pool.PrewarmOne();
                 instanceToPool[instance] = pool;
             }
+        }
+
+        public async UniTask PrewarmAsync(
+            GameObject prefab,
+            int count,
+            PoolPrewarmOptions options,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfDisposed();
+            if (prefab == null)
+            {
+                throw new ArgumentNullException(nameof(prefab));
+            }
+
+            if (count <= 0)
+            {
+                return;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            GameObjectPool pool = GetOrCreatePool(prefab);
+            int createCount = pool.GetPrewarmCreateCount(count);
+            int maxInstancesPerFrame = options.ResolveMaxInstancesPerFrame();
+            for (int i = 0; i < createCount; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                GameObject instance = pool.PrewarmOne();
+                instanceToPool[instance] = pool;
+
+                bool hasMore = i + 1 < createCount;
+                if (hasMore && (i + 1) % maxInstancesPerFrame == 0)
+                {
+                    await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
+                }
+            }
+        }
+
+        public void SetMaxInactive(GameObject prefab, int maxInactiveCount)
+        {
+            ThrowIfDisposed();
+            if (prefab == null)
+            {
+                throw new ArgumentNullException(nameof(prefab));
+            }
+
+            int capacity = Mathf.Max(0, maxInactiveCount);
+            capacityOverrides[prefab] = capacity;
+            if (pools.TryGetValue(prefab, out GameObjectPool pool))
+            {
+                pool.SetCapacity(capacity, RemoveTrimmedInstance);
+            }
+        }
+
+        public void Trim(GameObject prefab, int targetInactiveCount)
+        {
+            ThrowIfDisposed();
+            if (prefab == null)
+            {
+                throw new ArgumentNullException(nameof(prefab));
+            }
+
+            if (pools.TryGetValue(prefab, out GameObjectPool pool))
+            {
+                pool.Trim(targetInactiveCount, RemoveTrimmedInstance);
+            }
+        }
+
+        public void TrimAll(PoolTrimPolicy policy)
+        {
+            ThrowIfDisposed();
+            foreach (GameObjectPool pool in pools.Values)
+            {
+                pool.Trim(
+                    policy.GetTargetInactiveCount(pool.InactiveCount),
+                    RemoveTrimmedInstance);
+            }
+        }
+
+        public PoolServiceStats GetStats()
+        {
+            ThrowIfDisposed();
+            int active = 0;
+            int inactive = 0;
+            int created = 0;
+            int trimmed = 0;
+            foreach (GameObjectPool pool in pools.Values)
+            {
+                active += pool.ActiveCount;
+                inactive += pool.InactiveCount;
+                created += pool.CreatedTotal;
+                trimmed += pool.TrimmedTotal;
+            }
+
+            return new PoolServiceStats(pools.Count, active, inactive, created, trimmed);
+        }
+
+        public bool TryGetStats(GameObject prefab, out PoolStats stats)
+        {
+            ThrowIfDisposed();
+            if (prefab != null && pools.TryGetValue(prefab, out GameObjectPool pool))
+            {
+                stats = pool.GetStats();
+                return true;
+            }
+
+            stats = default;
+            return false;
         }
 
         public void ClearAllPools()
@@ -324,6 +486,23 @@ namespace HP.Framework.Pooling
             disposed = true;
         }
 
+        internal static void DestroyOwnedObject(UnityEngine.Object instance)
+        {
+            if (instance == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                UnityEngine.Object.Destroy(instance);
+            }
+            else
+            {
+                UnityEngine.Object.DestroyImmediate(instance);
+            }
+        }
+
         private GameObjectPool GetOrCreatePool(GameObject prefab)
         {
             if (pools.TryGetValue(prefab, out GameObjectPool pool))
@@ -333,13 +512,21 @@ namespace HP.Framework.Pooling
 
             GameObject parentObject = new GameObject($"Pool_{prefab.name}");
             parentObject.transform.SetParent(rootPoolParent, false);
+            int capacity = capacityOverrides.TryGetValue(prefab, out int overrideCapacity)
+                ? overrideCapacity
+                : maxInactiveInstancesPerPool;
             pool = new GameObjectPool(
                 prefab,
                 parentObject.transform,
-                maxInactiveInstancesPerPool,
+                capacity,
                 instantiate);
             pools.Add(prefab, pool);
             return pool;
+        }
+
+        private void RemoveTrimmedInstance(GameObject instance)
+        {
+            instanceToPool.Remove(instance);
         }
 
         private void ThrowIfDisposed()
@@ -351,5 +538,3 @@ namespace HP.Framework.Pooling
         }
     }
 }
-
-

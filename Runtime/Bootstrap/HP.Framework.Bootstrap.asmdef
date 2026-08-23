@@ -8,6 +8,8 @@
                        "HP.Framework.Haptics",
                        "HP.Framework.Lifecycle",
                        "HP.Framework.Persistence",
+                       "HP.Framework.Performance",
+                       "HP.Framework.Startup",
                        "HP.Framework.Pooling",
                        "HP.Framework.UI",
                        "UniTask",

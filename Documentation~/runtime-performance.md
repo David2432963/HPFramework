@@ -22,7 +22,7 @@ The expected contract is that an instance does not add/remove `IPoolable` compon
 
 ## Resources loading and ownership
 
-`ResourcesAssetProvider` shares one underlying same-key load across concurrent compatible requests. New code should prefer `IAssetLeaseProvider.AcquireAsync<T>()`: each returned lease owns one logical reference and a cancelled waiter does not cancel the shared Unity load needed by other waiters.
+`ResourcesAssetProvider` shares one underlying same-key load across concurrent compatible requests. New code should prefer `IAssetLeaseProvider.AcquireAsync<T>()`: each returned lease owns one logical reference, concurrent compatible callers await shared work, and cancelling one waiter does not cancel the Unity load needed by other waiters. Zero-reference records remain cacheable until `TrimUnused()` or provider disposal.
 
 Released lease records can remain cached at zero references until `IAssetMemoryService.TrimUnused()` runs. Low-memory trimming never removes a record with an active reference or waiter. Supported non-GameObject Resources assets can be passed to `Resources.UnloadAsset`; GameObject/Component assets only leave provider ownership because their physical unload semantics differ. The provider never invokes global `Resources.UnloadUnusedAssets()` automatically.
 

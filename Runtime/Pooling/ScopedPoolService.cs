@@ -3,6 +3,9 @@ using UnityEngine;
 using VContainer;
 using VContainer.Unity;
 
+using System.Threading;
+using Cysharp.Threading.Tasks;
+
 namespace HP.Framework.Pooling
 {
     /// <summary>
@@ -10,7 +13,7 @@ namespace HP.Framework.Pooling
     /// scope's resolver, so scene/feature dependencies are injected correctly and the pool is
     /// disposed together with the scope.
     /// </summary>
-    public sealed class ScopedPoolService : IPoolService, IDisposable
+    public sealed class ScopedPoolService : IPoolService, IPoolDiagnostics, IDisposable
     {
         private const int DefaultMaxInactiveInstancesPerPool = 64;
 
@@ -36,6 +39,15 @@ namespace HP.Framework.Pooling
                 rootObject.transform,
                 DefaultMaxInactiveInstancesPerPool,
                 (prefab, parent) => resolver.Instantiate(prefab, parent));
+        }
+
+        public PoolServiceStats Stats
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return runtime.GetStats();
+            }
         }
 
         public GameObject Get(GameObject prefab, Transform parent = null)
@@ -78,6 +90,40 @@ namespace HP.Framework.Pooling
             }
         }
 
+        public UniTask PrewarmAsync(
+            GameObject prefab,
+            int count,
+            PoolPrewarmOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfDisposed();
+            return runtime.PrewarmAsync(prefab, count, options, cancellationToken);
+        }
+
+        public void SetMaxInactive(GameObject prefab, int maxInactiveCount)
+        {
+            ThrowIfDisposed();
+            runtime.SetMaxInactive(prefab, maxInactiveCount);
+        }
+
+        public void Trim(GameObject prefab, int targetInactiveCount)
+        {
+            ThrowIfDisposed();
+            runtime.Trim(prefab, targetInactiveCount);
+        }
+
+        public void TrimAll(PoolTrimPolicy policy)
+        {
+            ThrowIfDisposed();
+            runtime.TrimAll(policy);
+        }
+
+        public bool TryGetStats(GameObject prefab, out PoolStats stats)
+        {
+            ThrowIfDisposed();
+            return runtime.TryGetStats(prefab, out stats);
+        }
+
         public void ClearAllPools()
         {
             ThrowIfDisposed();
@@ -95,7 +141,7 @@ namespace HP.Framework.Pooling
             disposed = true;
             if (rootObject != null)
             {
-                UnityEngine.Object.Destroy(rootObject);
+                PoolRuntime.DestroyOwnedObject(rootObject);
             }
         }
 
@@ -108,5 +154,3 @@ namespace HP.Framework.Pooling
         }
     }
 }
-
-

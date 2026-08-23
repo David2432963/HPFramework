@@ -13,6 +13,8 @@
         float Sensitivity { get; }
         int TargetFrameRate { get; }
         int QualityLevel { get; }
+        bool UseAutomaticPerformanceTier { get; }
+        int PreferredPerformanceTier { get; }
     }
 }
 

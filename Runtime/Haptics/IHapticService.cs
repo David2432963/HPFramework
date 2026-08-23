@@ -6,10 +6,10 @@
     public interface IHapticService
     {
         bool IsHapticEnabled { get; set; }
+        void Play(HapticType type);
         void VibrateShort();
         void VibrateLong();
         void VibrateCustom(long milliseconds);
     }
 }
-
 

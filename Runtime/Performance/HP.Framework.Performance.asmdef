@@ -1,0 +1,16 @@
+{
+  "name": "HP.Framework.Performance",
+  "rootNamespace": "HP.Framework.Performance",
+  "references": [
+    "HP.Framework.Core"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

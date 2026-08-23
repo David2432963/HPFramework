@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Linq;
+using HP.Framework.Lifecycle;
 using UnityEditor;
 using UnityEngine;
 using VContainer.Unity;
@@ -30,8 +31,13 @@ namespace HP.Framework.Editor
                 MessageType.Info);
 
             EditorGUILayout.Space(8f);
-            DrawStatus("Bootstrap prefab", AssetDatabase.LoadAssetAtPath<GameObject>(
-                HPFrameworkProjectPaths.BootstrapPath) != null);
+            GameObject bootstrapPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                HPFrameworkProjectPaths.BootstrapPath);
+            DrawStatus("Bootstrap prefab", bootstrapPrefab != null);
+            DrawStatus("Application lifecycle", bootstrapPrefab != null
+                && bootstrapPrefab.GetComponentInChildren<ApplicationLifecycleService>(true) != null);
+            DrawStatus("Runtime manager ownership", bootstrapPrefab != null
+                && bootstrapPrefab.GetComponentsInChildren<MonoBehaviour>(true).Length > 0);
             DrawStatus("VContainer settings", AssetDatabase.LoadAssetAtPath<VContainerSettings>(
                 HPFrameworkProjectPaths.VContainerSettingsPath) != null);
 
@@ -60,6 +66,14 @@ namespace HP.Framework.Editor
                 && !string.IsNullOrWhiteSpace(HPFrameworkProjectPaths.DefaultInputActionsPath));
             DrawStatus("Default Toast prefab",
                 !string.IsNullOrWhiteSpace(HPFrameworkProjectPaths.ToastPrefabPath));
+
+            EditorGUILayout.HelpBox(
+                "Async startup is registered by Bootstrap but starts explicitly from the application boot flow. " +
+                "Register IStartupTask implementations in a derived RootLifetimeScope.RegisterApplicationStartupTasks override.",
+                MessageType.None);
+            EditorGUILayout.HelpBox(
+                "Validate Project checks manager ownership, Input Actions, performance references, pool budgets, and Audio/UI catalog policy without overwriting custom configuration.",
+                MessageType.None);
 
             EditorGUILayout.Space(12f);
             if (GUILayout.Button("Setup / Repair Missing References", GUILayout.Height(34f)))

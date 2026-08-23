@@ -44,6 +44,12 @@ The default `ResourcesAssetProvider` exposes both the v3 compatibility `IAssetPr
 
 ## Runtime ownership rules
 
+- Application lifecycle is a low-level signal source. It depends only on Core; Persistence/Assets/Pooling reactions are wired by Bootstrap adapters.
+- Performance policy is also a low-level module depending only on Core. `PerformanceService` is the sole framework runtime owner of FPS/Quality actuation; Bootstrap wires persisted preferences and device classification.
+- Async startup is a separate readiness boundary, not a second DI lifecycle. `IInitializable` remains synchronous; `IStartupTask` is reserved for awaitable external/content/platform readiness.
+- Asset-backed Audio and UI depend on the Assets contracts only; active voices/views own leases and release them at their explicit stop/destroy boundaries.
+- Primary input maps use switch semantics while additional maps use ref-counted leases, preventing one feature from disabling another feature's map.
+- Diagnostics consumes immutable module snapshots and never reaches into manager private state.
 - Application-wide services belong to the root container.
 - Menu/gameplay state belongs to scene containers.
 - Short-lived feature state belongs to feature containers.
@@ -89,7 +95,11 @@ Prefer constructor/method injection and VContainer lifecycle entry points so dep
 
 Runtime assemblies are split by responsibility. `HP.Framework.Core` is kept at the bottom of the dependency graph, while higher-level modules build on top of it.
 
+`HP.Framework.Startup` depends only on Core + UniTask. Higher-level tasks are composed by Bootstrap so Startup does not gain reverse dependencies on Persistence, Assets, UI, or game/platform SDKs.
+
 Optional integrations should remain outside the core graph. The Input System integration is compile-time optional in editable Assets mode; Bootstrap/Editor setup resolves it without forcing the core architecture to depend on the package.
+
+Locked low-level dependencies include `Lifecycle -> Core` and `Performance -> Core`. Renderer-specific performance integrations such as URP live behind `IPerformanceRendererApplier` rather than making the Performance module depend on a render pipeline.
 
 `ApplicationProcedure` coordinates application-level flow. It is not a substitute for scene gameplay systems.
 

@@ -49,11 +49,33 @@ The pool contract assumes the set of `IPoolable` components does not change afte
 
 Global pool runtime children are owned by the `Pools` domain in the canonical Bootstrap. Scoped pools create their own `ScopedPoolRoot` under the owning `LifetimeScope`.
 
+### Async prewarm and budgets
+
+The synchronous `Prewarm` API remains available for small deterministic warmups. Mobile-facing warmups should use `PrewarmAsync` with `PoolPrewarmOptions.MaxInstancesPerFrame` so creation work is split across Unity frames. Cancellation stops future creation and leaves instances already created as valid inactive pool entries.
+
+The framework default inactive capacity is inherited by every pool unless `SetMaxInactive` or an optional `PoolConfigSO` definition overrides that prefab. Releasing above capacity destroys only the released overflow instance; active instances are never selected for capacity trimming.
+
+### Trim and diagnostics
+
+`Trim(prefab, targetInactiveCount)` and `TrimAll(policy)` only release inactive instances. `PoolTrimPolicy.Balanced` retains half of each inactive pool, while `Aggressive` releases every inactive instance. The Bootstrap low-memory adapter uses the aggressive policy and never destroys checked-out instances.
+
+Resolve `IPoolDiagnostics` to read aggregate `PoolServiceStats` or immutable per-prefab `PoolStats`. Diagnostics expose pool, active, inactive, created and trimmed counters without exposing runtime collections.
+
 ## UI ownership and clearing
 
 `UIManager.ClearScreens()` and `ClearPopups()` deactivate/destroy registered owned views before clearing the tracking collections. Reconfiguring the UI catalog also clears old owned views so previous instances do not become orphaned.
 
 Scoped UI follows the same ownership rule: views created by a child scope are destroyed when that scope is disposed.
+
+## Async UI assets
+
+`UICatalogSO.UIEntry` supports `DirectPrefab` and `AssetKey` modes. Keep small/frequent UI on the direct path. Use `AssetKey` for large screens or popups that should load on demand, and set the assembly-qualified popup/screen type on the entry so the catalog can resolve it without loading the prefab.
+
+Direct entries continue to use `ShowScreen<T>()` and `OpenPopup<T>()`. Asset-key entries require `ShowScreenAsync<T>()` or `OpenPopupAsync<T>()`; calling a sync API for those entries throws a descriptive exception instead of returning null or silently starting work.
+
+Concurrent async requests for the same type share one load and one instance. Cancelling one waiter does not cancel the shared operation for other waiters. If every waiter cancels before an uncancellable load finishes, the late instance, lease, and pending record are cleaned automatically.
+
+An asset-backed cached view retains its `IAssetLease<GameObject>` while cached. A non-cached view releases the lease when hidden/destroyed. `ClearScreens`, `ClearPopups`, catalog reconfiguration, and manager destruction release all remaining view leases.
 
 ## BasePopup animation preview
 

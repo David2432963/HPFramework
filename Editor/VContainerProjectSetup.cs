@@ -2,9 +2,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using HP.Framework;
+using HP.Framework.Audio;
 using HP.Framework.Bootstrap;
+using HP.Framework.Haptics;
 using HP.Framework.Lifecycle;
+using HP.Framework.Pooling;
+using HP.Framework.UI;
 using UnityEditor;
 using UnityEngine;
 using VContainer.Unity;
@@ -107,6 +112,152 @@ namespace HP.Framework.Editor
             }
 
             valid = ValidateLoadingSceneSetup() && valid;
+
+            RootLifetimeScope hpRoot = FindBootstrapRootScope();
+            if (hpRoot == null)
+            {
+                valid = false;
+                Debug.LogError(
+                    "[HP Framework/VContainer] Bootstrap prefab with RootLifetimeScope is missing. Run Tools/HP Framework/Setup / Repair.");
+            }
+            else
+            {
+                if (hpRoot.GetComponentInChildren<ApplicationLifecycleService>(true) == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing ApplicationLifecycleService. Run Tools/HP Framework/Setup / Repair.");
+                }
+                AudioManager audioManager = hpRoot.GetComponentInChildren<AudioManager>(true);
+                if (audioManager == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing AudioManager. Run Tools/HP Framework/Setup / Repair.");
+                }
+                PoolManager poolManager = hpRoot.GetComponentInChildren<PoolManager>(true);
+                if (poolManager == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing PoolManager. Run Tools/HP Framework/Setup / Repair.");
+                }
+                if (hpRoot.GetComponentInChildren<UIManager>(true) == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing UIManager. Run Tools/HP Framework/Setup / Repair.");
+                }
+                if (hpRoot.GetComponentInChildren<GameSceneManager>(true) == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing GameSceneManager. Run Tools/HP Framework/Setup / Repair.");
+                }
+                if (hpRoot.GetComponentInChildren<HapticManager>(true) == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap is missing HapticManager. Run Tools/HP Framework/Setup / Repair.");
+                }
+
+                ValidateNoDuplicateManager<ApplicationLifecycleService>(hpRoot, ref valid);
+                ValidateNoDuplicateManager<AudioManager>(hpRoot, ref valid);
+                ValidateNoDuplicateManager<UIManager>(hpRoot, ref valid);
+                ValidateNoDuplicateManager<GameSceneManager>(hpRoot, ref valid);
+                ValidateNoDuplicateManager<PoolManager>(hpRoot, ref valid);
+                ValidateNoDuplicateManager<HapticManager>(hpRoot, ref valid);
+
+                if (poolManager != null)
+                {
+                    SerializedObject poolObject = new SerializedObject(poolManager);
+                    PoolConfigSO poolConfig = poolObject.FindProperty("poolConfig")
+                        ?.objectReferenceValue as PoolConfigSO;
+                    if (poolConfig != null && !poolConfig.TryValidate(out string poolError))
+                    {
+                        valid = false;
+                        Debug.LogError(
+                            $"[HP Framework/VContainer] PoolConfig is invalid:\n{poolError}",
+                            poolConfig);
+                    }
+                }
+
+                SerializedObject rootObject = new SerializedObject(hpRoot);
+                MonoBehaviour inputManager = rootObject.FindProperty("inputManager")
+                    ?.objectReferenceValue as MonoBehaviour;
+                if (inputManager != null)
+                {
+                    SerializedObject inputObject = new SerializedObject(inputManager);
+                    if (inputObject.FindProperty("inputActions")?.objectReferenceValue == null)
+                    {
+                        valid = false;
+                        Debug.LogError(
+                            "[HP Framework/VContainer] InputManager has no InputActionAsset assigned. Run Tools/HP Framework/Setup / Repair.",
+                            inputManager);
+                    }
+
+                    SerializedProperty defaultMap = inputObject.FindProperty("defaultActionMap");
+                    if (defaultMap != null && string.IsNullOrWhiteSpace(defaultMap.stringValue))
+                    {
+                        Debug.LogWarning(
+                            "[HP Framework/VContainer] InputManager has no default primary action map. This is valid only when application code selects the primary map explicitly.",
+                            inputManager);
+                    }
+                    else if (defaultMap != null
+                             && inputObject.FindProperty("inputActions")
+                                 ?.objectReferenceValue is UnityEngine.Object inputActions
+                             && !ContainsInputActionMap(inputActions, defaultMap.stringValue))
+                    {
+                        valid = false;
+                        Debug.LogError(
+                            $"[HP Framework/VContainer] InputManager default map '{defaultMap.stringValue}' does not exist in '{inputActions.name}'.",
+                            inputManager);
+                    }
+                }
+                AudioLibrarySO audioLibrary = rootObject.FindProperty("audioLibrary")
+                    ?.objectReferenceValue as AudioLibrarySO;
+                if (audioLibrary == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap has no AudioLibrary assigned. Run Tools/HP Framework/Setup / Repair.");
+                }
+                else if (!audioLibrary.TryValidate(out string audioError))
+                {
+                    valid = false;
+                    Debug.LogError(
+                        $"[HP Framework/VContainer] AudioLibrary is invalid:\n{audioError}",
+                        audioLibrary);
+                }
+                UICatalogSO uiCatalog = rootObject.FindProperty("uiCatalog")
+                    ?.objectReferenceValue as UICatalogSO;
+                if (uiCatalog == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap has no UICatalog assigned. Run Tools/HP Framework/Setup / Repair.");
+                }
+                else if (!uiCatalog.TryValidate(out string uiError))
+                {
+                    valid = false;
+                    Debug.LogError(
+                        $"[HP Framework/VContainer] UICatalog is invalid:\n{uiError}",
+                        uiCatalog);
+                }
+                if (rootObject.FindProperty("performanceCatalog")?.objectReferenceValue == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap has no PerformanceCatalog assigned. Run Tools/HP Framework/Setup / Repair.");
+                }
+                if (rootObject.FindProperty("devicePerformancePolicy")?.objectReferenceValue == null)
+                {
+                    valid = false;
+                    Debug.LogError(
+                        "[HP Framework/VContainer] Bootstrap has no DevicePerformancePolicy assigned. Run Tools/HP Framework/Setup / Repair.");
+                }
+            }
+
             ValidateSceneRootDuplicates(settings);
             ValidateFeatureParents();
 
@@ -247,6 +398,37 @@ namespace HP.Framework.Editor
                     "LifetimeScope parent. It will fall back to the project root and may bypass scene-scoped services.",
                     featureScope);
             }
+        }
+
+        private static void ValidateNoDuplicateManager<T>(
+            RootLifetimeScope root,
+            ref bool valid)
+            where T : Component
+        {
+            T[] managers = root.GetComponentsInChildren<T>(true);
+            if (managers.Length <= 1)
+            {
+                return;
+            }
+
+            valid = false;
+            Debug.LogError(
+                $"[HP Framework/VContainer] Bootstrap contains {managers.Length} {typeof(T).Name} components. Exactly one owner is allowed.",
+                root);
+        }
+
+        private static bool ContainsInputActionMap(
+            UnityEngine.Object inputActions,
+            string mapName)
+        {
+            MethodInfo findActionMap = inputActions.GetType().GetMethod(
+                "FindActionMap",
+                BindingFlags.Instance | BindingFlags.Public,
+                binder: null,
+                types: new[] { typeof(string), typeof(bool) },
+                modifiers: null);
+            return findActionMap == null
+                || findActionMap.Invoke(inputActions, new object[] { mapName, false }) != null;
         }
 
         private static bool HasExplicitOrHierarchyParent(LifetimeScope scope)
@@ -407,4 +589,3 @@ namespace HP.Framework.Editor
     }
 }
 #endif
-

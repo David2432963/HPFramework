@@ -18,6 +18,8 @@ namespace HP.Framework.Persistence
         new float Sensitivity { get; set; }
         new int TargetFrameRate { get; set; }
         new int QualityLevel { get; set; }
+        new bool UseAutomaticPerformanceTier { get; set; }
+        new int PreferredPerformanceTier { get; set; }
 
         void Save();
     }

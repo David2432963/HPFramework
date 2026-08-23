@@ -19,7 +19,7 @@ namespace HP.Framework.Extensions
             else
             {
                 PointerEventData pe = new PointerEventData(EventSystem.current);
-                pe.position = Input.mousePosition;
+                pe.position = UnityEngine.Input.mousePosition;
                 List<RaycastResult> hits = new List<RaycastResult>();
                 EventSystem.current.RaycastAll(pe, hits);
                 return hits.Count > 0;
@@ -31,7 +31,9 @@ namespace HP.Framework.Extensions
             if (EventSystem.current == null) return false;
 
             var eventDataCurrentPosition = new PointerEventData(EventSystem.current);
-            eventDataCurrentPosition.position = new Vector2(Input.mousePosition.x, Input.mousePosition.y);
+            eventDataCurrentPosition.position = new Vector2(
+                UnityEngine.Input.mousePosition.x,
+                UnityEngine.Input.mousePosition.y);
 
             var results = new List<RaycastResult>();
             EventSystem.current.RaycastAll(eventDataCurrentPosition, results);

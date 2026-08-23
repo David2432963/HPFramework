@@ -11,18 +11,62 @@
     /// Shared Input System context controller. It owns one primary action map plus explicitly
     /// tracked additional maps without disabling unrelated maps in the same InputActionAsset.
     /// </summary>
-    public sealed class InputManager : MonoBehaviour, IInitializable, IDisposable
+    public sealed class InputManager : MonoBehaviour, IInputDiagnostics, IInitializable, IDisposable
     {
+        private sealed class InputMapLease : IInputMapLease
+        {
+            private InputManager owner;
+            private readonly int generation;
+
+            public InputMapLease(InputManager owner, string mapName, int generation)
+            {
+                this.owner = owner;
+                MapName = mapName;
+                this.generation = generation;
+            }
+
+            public string MapName { get; }
+            public bool IsValid => owner != null && owner.IsLeaseValid(MapName, generation);
+
+            public void Dispose()
+            {
+                InputManager currentOwner = owner;
+                owner = null;
+                currentOwner?.ReleaseLease(MapName, generation);
+            }
+        }
+
         [SerializeField] private InputActionAsset inputActions;
         [SerializeField] private string defaultActionMap;
         [SerializeField] private bool enableDefaultMapOnInitialize = true;
 
-        private readonly HashSet<string> additionalMapNames = new HashSet<string>(StringComparer.Ordinal);
+        private readonly HashSet<string> additionalMapNames =
+            new HashSet<string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> leasedMapRefCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
         private string currentMapName;
+        private int leaseGeneration;
         private bool initialized;
 
         public InputActionAsset InputActions => inputActions;
         public string CurrentMapName => currentMapName;
+        public InputServiceStats Stats
+        {
+            get
+            {
+                int activeLeaseCount = 0;
+                foreach (int refCount in leasedMapRefCounts.Values)
+                {
+                    activeLeaseCount += refCount;
+                }
+
+                return new InputServiceStats(
+                    currentMapName,
+                    leasedMapRefCounts.Count,
+                    activeLeaseCount,
+                    additionalMapNames.Count);
+            }
+        }
 
         public void Initialize()
         {
@@ -78,6 +122,11 @@
                 return true;
             }
 
+            if (leasedMapRefCounts.ContainsKey(mapName))
+            {
+                return false;
+            }
+
             if (!string.IsNullOrWhiteSpace(currentMapName))
             {
                 DisableCurrentMap();
@@ -89,21 +138,42 @@
             return true;
         }
 
-        /// <summary>
-        /// Enables an additional map without changing the current primary map. Additional maps are
-        /// tracked by this manager and are disabled when the manager is disposed or its asset changes.
-        /// </summary>
-        public bool TryEnableAdditionalMap(string mapName)
+        public bool TryDisableMap(string mapName)
         {
-            if (string.IsNullOrWhiteSpace(mapName)
-                || string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            if (IsAdditionalMapOwned(mapName)
+                && !string.Equals(currentMapName, mapName, StringComparison.Ordinal))
             {
                 return false;
             }
 
+            if (!InputActionMapFacade.DisableActionMap(inputActions, mapName))
+            {
+                return false;
+            }
+
+            additionalMapNames.Remove(mapName);
+            if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                currentMapName = null;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Enables an additional framework-owned map without replacing the primary map.
+        /// Use this for one-owner compatibility scenarios such as gameplay + persistent UI.
+        /// Multi-owner consumers should migrate to the lease API introduced by the later input hardening milestone.
+        /// </summary>
+        public bool TryEnableAdditionalMap(string mapName)
+        {
             if (!InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
             {
                 return false;
+            }
+
+            if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                return true;
             }
 
             actionMap.Enable();
@@ -112,47 +182,73 @@
         }
 
         /// <summary>
-        /// Releases an additional map owned by this manager. Disabling an already released map is
-        /// idempotent as long as that map exists and is not the current primary map.
+        /// Releases a tracked additional map. Releasing the current primary map is intentionally a no-op;
+        /// primary ownership must be changed through the primary-map API.
         /// </summary>
         public bool TryDisableAdditionalMap(string mapName)
         {
-            if (string.IsNullOrWhiteSpace(mapName)
-                || string.Equals(currentMapName, mapName, StringComparison.Ordinal)
-                || !InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
-            {
-                return false;
-            }
-
-            if (!additionalMapNames.Remove(mapName))
-            {
-                return true;
-            }
-
-            actionMap.Disable();
-            return true;
-        }
-
-        public bool IsMapEnabled(string mapName)
-        {
-            return InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap)
-                && actionMap.enabled;
-        }
-
-        public bool TryDisableMap(string mapName)
-        {
-            if (!InputActionMapFacade.DisableActionMap(inputActions, mapName))
+            if (!InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
             {
                 return false;
             }
 
             if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
             {
-                currentMapName = null;
+                return true;
+            }
+
+            if (!additionalMapNames.Remove(mapName))
+            {
+                // Do not disable a map owned by some external consumer. Treat an already-disabled
+                // untracked map as the desired idempotent state; an enabled untracked map is an
+                // ownership conflict that the caller must resolve explicitly.
+                return !actionMap.enabled;
+            }
+
+            if (!leasedMapRefCounts.ContainsKey(mapName))
+            {
+                actionMap.Disable();
             }
 
             additionalMapNames.Remove(mapName);
             return true;
+        }
+
+        /// <summary>
+        /// Acquires shared ownership of an additional action map. The map remains enabled until
+        /// every lease and compatibility owner has released it.
+        /// </summary>
+        public IInputMapLease AcquireMap(string mapName)
+        {
+            if (string.IsNullOrWhiteSpace(mapName))
+            {
+                throw new ArgumentException("An input map name is required.", nameof(mapName));
+            }
+
+            if (string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Input map '{mapName}' is the current primary map and cannot be leased as an additional map.");
+            }
+
+            if (!InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap))
+            {
+                throw new InvalidOperationException(
+                    $"Input map '{mapName}' was not found in the configured InputActionAsset.");
+            }
+
+            int refCount = leasedMapRefCounts.TryGetValue(mapName, out int currentRefCount)
+                ? currentRefCount + 1
+                : 1;
+            leasedMapRefCounts[mapName] = refCount;
+            actionMap.Enable();
+            return new InputMapLease(this, mapName, leaseGeneration);
+        }
+
+        public bool IsMapEnabled(string mapName)
+        {
+            return InputActionMapFacade.TryGetActionMap(inputActions, mapName, out InputActionMap actionMap)
+                && actionMap.enabled;
         }
 
         public bool TrySwitchMap(string mapName)
@@ -203,30 +299,69 @@
 
         public string GetCurrentMapName() => currentMapName;
 
-        private void DisableOwnedMaps()
-        {
-            DisableCurrentMap();
-            if (additionalMapNames.Count == 0)
-            {
-                return;
-            }
-
-            foreach (string mapName in additionalMapNames)
-            {
-                InputActionMapFacade.DisableActionMap(inputActions, mapName);
-            }
-
-            additionalMapNames.Clear();
-        }
-
         public void Dispose()
         {
             DisableOwnedMaps();
             initialized = false;
         }
+
+        private void DisableOwnedMaps()
+        {
+            DisableCurrentMap();
+
+            if (inputActions != null)
+            {
+                foreach (string mapName in additionalMapNames)
+                {
+                    InputActionMapFacade.DisableActionMap(inputActions, mapName);
+                }
+
+                foreach (string mapName in leasedMapRefCounts.Keys)
+                {
+                    InputActionMapFacade.DisableActionMap(inputActions, mapName);
+                }
+            }
+
+            additionalMapNames.Clear();
+            leasedMapRefCounts.Clear();
+            leaseGeneration++;
+        }
+
+        private bool IsAdditionalMapOwned(string mapName)
+        {
+            return additionalMapNames.Contains(mapName)
+                || leasedMapRefCounts.ContainsKey(mapName);
+        }
+
+        private bool IsLeaseValid(string mapName, int generation)
+        {
+            return generation == leaseGeneration
+                && leasedMapRefCounts.TryGetValue(mapName, out int refCount)
+                && refCount > 0;
+        }
+
+        private void ReleaseLease(string mapName, int generation)
+        {
+            if (generation != leaseGeneration
+                || !leasedMapRefCounts.TryGetValue(mapName, out int refCount))
+            {
+                return;
+            }
+
+            if (refCount > 1)
+            {
+                leasedMapRefCounts[mapName] = refCount - 1;
+                return;
+            }
+
+            leasedMapRefCounts.Remove(mapName);
+            if (!additionalMapNames.Contains(mapName)
+                && !string.Equals(currentMapName, mapName, StringComparison.Ordinal))
+            {
+                InputActionMapFacade.DisableActionMap(inputActions, mapName);
+            }
+        }
     }
 
 
 }
-
-

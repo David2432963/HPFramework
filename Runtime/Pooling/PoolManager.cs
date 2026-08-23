@@ -1,7 +1,8 @@
 ﻿namespace HP.Framework.Pooling
 {
     using System;
-    using HP.Framework.Pooling;
+    using System.Threading;
+    using Cysharp.Threading.Tasks;
     using UnityEngine;
     using VContainer;
     using VContainer.Unity;
@@ -10,10 +11,11 @@
     /// Application-lifetime pool. Child scopes should call builder.RegisterScopedPool() so their
     /// prefabs are instantiated through the child resolver instead of this root resolver.
     /// </summary>
-    public sealed class PoolManager : MonoBehaviour, IPoolService, IInitializable, IDisposable
+    public sealed class PoolManager : MonoBehaviour, IPoolService, IPoolDiagnostics, IInitializable, IDisposable
     {
         [SerializeField] private Transform rootPoolParent;
         [SerializeField, Min(1)] private int maxInactiveInstancesPerPool = 64;
+        [SerializeField] private PoolConfigSO poolConfig;
 
         private IObjectResolver objectResolver;
         private PoolRuntime runtime;
@@ -40,7 +42,17 @@
                 rootPoolParent,
                 maxInactiveInstancesPerPool,
                 InstantiateWithVContainer);
+            ApplyConfiguredCapacities();
             initialized = true;
+        }
+
+        public PoolServiceStats Stats
+        {
+            get
+            {
+                EnsureInitialized();
+                return runtime.GetStats();
+            }
         }
 
         public GameObject Get(GameObject prefab, Transform parent = null)
@@ -83,6 +95,65 @@
             }
         }
 
+        public UniTask PrewarmAsync(
+            GameObject prefab,
+            int count,
+            PoolPrewarmOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureInitialized();
+            return runtime.PrewarmAsync(prefab, count, options, cancellationToken);
+        }
+
+        public async UniTask PrewarmConfiguredPoolsAsync(
+            PoolPrewarmOptions options,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureInitialized();
+            if (poolConfig == null)
+            {
+                return;
+            }
+
+            foreach (PoolDefinition definition in poolConfig.Definitions)
+            {
+                if (definition?.Prefab == null || definition.PrewarmCount <= 0)
+                {
+                    continue;
+                }
+
+                await runtime.PrewarmAsync(
+                    definition.Prefab,
+                    definition.PrewarmCount,
+                    options,
+                    cancellationToken);
+            }
+        }
+
+        public void SetMaxInactive(GameObject prefab, int maxInactiveCount)
+        {
+            EnsureInitialized();
+            runtime.SetMaxInactive(prefab, maxInactiveCount);
+        }
+
+        public void Trim(GameObject prefab, int targetInactiveCount)
+        {
+            EnsureInitialized();
+            runtime.Trim(prefab, targetInactiveCount);
+        }
+
+        public void TrimAll(PoolTrimPolicy policy)
+        {
+            EnsureInitialized();
+            runtime.TrimAll(policy);
+        }
+
+        public bool TryGetStats(GameObject prefab, out PoolStats stats)
+        {
+            EnsureInitialized();
+            return runtime.TryGetStats(prefab, out stats);
+        }
+
         public void ClearAllPools()
         {
             runtime?.ClearAllPools();
@@ -102,6 +173,22 @@
                 : Instantiate(prefab, parent, false);
         }
 
+        private void ApplyConfiguredCapacities()
+        {
+            if (poolConfig == null)
+            {
+                return;
+            }
+
+            foreach (PoolDefinition definition in poolConfig.Definitions)
+            {
+                if (definition?.Prefab != null)
+                {
+                    runtime.SetMaxInactive(definition.Prefab, definition.MaxInactiveCount);
+                }
+            }
+        }
+
         private void EnsureInitialized()
         {
             if (!initialized)
@@ -113,5 +200,4 @@
 
 
 }
-
 

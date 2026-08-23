@@ -6,9 +6,12 @@ using HP.Framework.Assets;
 using HP.Framework.Audio;
 using HP.Framework.Common;
 using HP.Framework.Haptics;
+using HP.Framework.Input;
 using HP.Framework.Lifecycle;
 using HP.Framework.Persistence;
+using HP.Framework.Performance;
 using HP.Framework.Pooling;
+using HP.Framework.Startup;
 using HP.Framework.UI;
 
 namespace HP.Framework.Bootstrap
@@ -33,6 +36,10 @@ namespace HP.Framework.Bootstrap
         [Header("Shared Catalogs (Optional)")]
         [SerializeField] private AudioLibrarySO audioLibrary;
         [SerializeField] private UICatalogSO uiCatalog;
+
+        [Header("Performance")]
+        [SerializeField] private PerformanceCatalogSO performanceCatalog;
+        [SerializeField] private DevicePerformancePolicySO devicePerformancePolicy;
 
         protected override void Awake()
         {
@@ -142,7 +149,16 @@ namespace HP.Framework.Bootstrap
         {
             builder.RegisterScopeEventBus();
             RegisterAssetProvider(builder);
+            if (applicationLifecycle != null && poolManager != null)
+            {
+                builder.Register<ApplicationLifecyclePoolTrimmer>(Lifetime.Singleton)
+                    .As<IInitializable>()
+                    .As<IDisposable>();
+            }
             RegisterSettingsServices(builder);
+            RegisterPerformanceServices(builder);
+            RegisterStartupServices(builder);
+            RegisterApplicationStartupTasks(builder);
         }
 
         /// <summary>
@@ -170,6 +186,42 @@ namespace HP.Framework.Bootstrap
             }
         }
 
+        /// <summary>
+        /// Register application/content/platform startup tasks here using RegisterStartupTask.
+        /// Synchronous DI wiring remains in IInitializable; only awaitable readiness work belongs here.
+        /// </summary>
+        protected virtual void RegisterApplicationStartupTasks(IContainerBuilder builder)
+        {
+        }
+
+        protected virtual void RegisterPerformanceServices(IContainerBuilder builder)
+        {
+            if (performanceCatalog == null || devicePerformancePolicy == null)
+            {
+                return;
+            }
+
+            builder.RegisterInstance(performanceCatalog);
+            builder.RegisterInstance(devicePerformancePolicy);
+            builder.Register<DefaultDevicePerformanceClassifier>(Lifetime.Singleton)
+                .As<IDevicePerformanceClassifier>();
+            builder.Register<PerformanceService>(Lifetime.Singleton)
+                .AsSelf()
+                .As<IPerformanceService>()
+                .As<IPerformanceDiagnosticsControl>();
+            builder.Register<PerformancePreferenceCoordinator>(Lifetime.Singleton)
+                .AsSelf()
+                .As<IPerformancePreferenceService>()
+                .As<IInitializable>();
+        }
+
+        private static void RegisterStartupServices(IContainerBuilder builder)
+        {
+            builder.Register<StartupCoordinator>(Lifetime.Singleton)
+                .AsSelf()
+                .As<IStartupCoordinator>();
+        }
+
         private static void RegisterProcedureManager(IContainerBuilder builder)
         {
             builder.Register<ProcedureManager>(Lifetime.Singleton)
@@ -193,6 +245,7 @@ namespace HP.Framework.Bootstrap
                 builder.RegisterComponent(audioManager)
                     .AsSelf()
                     .As<IAudioService>()
+                    .As<IAudioDiagnostics>()
                     .As<IInitializable>()
                     .As<IDisposable>();
             }
@@ -211,6 +264,17 @@ namespace HP.Framework.Bootstrap
                 builder.RegisterComponent(inputManager)
                     .AsSelf()
                     .AsImplementedInterfaces();
+
+                if (!(inputManager is IInputDiagnostics))
+                {
+                    builder.RegisterInstance(new UnavailableInputDiagnostics())
+                        .As<IInputDiagnostics>();
+                }
+            }
+            else
+            {
+                builder.RegisterInstance(new UnavailableInputDiagnostics())
+                    .As<IInputDiagnostics>();
             }
 
             if (gameSceneManager != null)
@@ -226,6 +290,7 @@ namespace HP.Framework.Bootstrap
                 builder.RegisterComponent(poolManager)
                     .AsSelf()
                     .As<IPoolService>()
+                    .As<IPoolDiagnostics>()
                     .As<IInitializable>()
                     .As<IDisposable>();
             }
@@ -241,4 +306,3 @@ namespace HP.Framework.Bootstrap
         }
     }
 }
-

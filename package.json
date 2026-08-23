@@ -2,7 +2,7 @@
     "name":  "com.hp.framework",
     "version":  "3.0.0",
     "displayName":  "HP Framework",
-    "description":  "VContainer-first modular Unity game framework with scoped services, application lifecycle, scene flow, UI, pooling, persistence, audio, input, haptics, graphics, diagnostics and reusable extensions.",
+    "description":  "VContainer-first modular Unity game framework with scoped services, application lifecycle, async startup readiness, mobile performance profiles, asset ownership, scene flow, UI, pooling, persistence, audio, input, haptics, graphics, diagnostics and reusable extensions.",
     "unity":  "6000.0",
     "author":  {
                    "name":  "HP"
@@ -31,6 +31,36 @@
                         "displayName":  "Safe Area",
                         "description":  "Safe Area simulation demo and sample scene.",
                         "path":  "Samples~/04 Safe Area"
+                    },
+                    {
+                        "displayName":  "Application Lifecycle",
+                        "description":  "Low-memory and application lifecycle ownership example.",
+                        "path":  "Samples~/05 Application Lifecycle"
+                    },
+                    {
+                        "displayName":  "Mobile Performance Profiles",
+                        "description":  "Player-facing automatic and explicit performance preferences.",
+                        "path":  "Samples~/06 Mobile Performance Profiles"
+                    },
+                    {
+                        "displayName":  "Startup Pipeline",
+                        "description":  "Awaitable startup task registration with timeout and retry policy.",
+                        "path":  "Samples~/07 Startup Pipeline"
+                    },
+                    {
+                        "displayName":  "Asset Lease",
+                        "description":  "Explicit async asset lifetime ownership.",
+                        "path":  "Samples~/08 Asset Lease"
+                    },
+                    {
+                        "displayName":  "Pool Budget",
+                        "description":  "Batched prewarm, capacity and trim policy example.",
+                        "path":  "Samples~/09 Pool Budget"
+                    },
+                    {
+                        "displayName":  "Mobile Diagnostics",
+                        "description":  "Opt-in throttled on-device diagnostics HUD.",
+                        "path":  "Samples~/10 Mobile Diagnostics"
                     }
                 ],
     "keywords":  [

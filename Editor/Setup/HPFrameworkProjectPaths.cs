@@ -10,11 +10,17 @@ namespace HP.Framework.Editor
         public const string UIAnimationPresetFolder = SettingsFolder + "/UIAnimationPresets";
         public const string LoadingSceneAssetPath =
             FrameworkFolder + "/Runtime/Bootstrap/Loading/Scenes/LoadingScene.unity";
+        public const string PerformanceFolder = SettingsFolder + "/Performance";
 
         public const string BootstrapPath = GeneratedFolder + "/Bootstrap.prefab";
         public const string VContainerSettingsPath = SettingsFolder + "/VContainerSettings.asset";
         public const string AudioLibraryPath = SettingsFolder + "/DefaultAudioLibrary.asset";
         public const string UICatalogPath = SettingsFolder + "/DefaultUICatalog.asset";
+        public const string LowPerformanceProfilePath = PerformanceFolder + "/Low.asset";
+        public const string MediumPerformanceProfilePath = PerformanceFolder + "/Medium.asset";
+        public const string HighPerformanceProfilePath = PerformanceFolder + "/High.asset";
+        public const string PerformanceCatalogPath = PerformanceFolder + "/PerformanceCatalog.asset";
+        public const string DevicePerformancePolicyPath = PerformanceFolder + "/DevicePerformancePolicy.asset";
 
         public const string BootstrapTemplateGuid = "550d92965c5c4c53b9949039d465faba";
         public const string LoadingSceneGuid = "9806de10e37b6b04092877dc41f8724d";

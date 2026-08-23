@@ -9,6 +9,7 @@
                        "HP.Framework.Haptics",
                        "HP.Framework.Lifecycle",
                        "HP.Framework.Persistence",
+                       "HP.Framework.Performance",
                        "HP.Framework.Pooling",
                        "HP.Framework.UI",
                        "HP.Framework.UI.TMP",

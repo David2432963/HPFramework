@@ -23,9 +23,9 @@ namespace HP.Framework.Pooling
             return builder.Register<ScopedPoolService>(Lifetime.Scoped)
                 .AsSelf()
                 .As<IPoolService>()
+                .As<IPoolDiagnostics>()
                 .As<IDisposable>();
         }
     }
 }
-
 

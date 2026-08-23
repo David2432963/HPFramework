@@ -1,5 +1,12 @@
+using System.Text;
+using HP.Framework.Assets;
+using HP.Framework.Audio;
+using HP.Framework.Input;
+using HP.Framework.Performance;
+using HP.Framework.Pooling;
 using UnityEngine;
 using UnityEngine.UI;
+using VContainer;
 
 namespace HP.Framework.Diagnostics
 {
@@ -18,27 +25,57 @@ namespace HP.Framework.Diagnostics
         [SerializeField] private bool showFPS = true;
         [SerializeField] private bool lockFpsOnStart;
         [SerializeField] private bool showFpsCounter = true;
+        [SerializeField] private bool includeInReleaseBuild;
 
-        private int originalTargetFrameRate;
-        private int originalVSyncCount;
+        private IPerformanceDiagnosticsControl performanceControl;
+        private IPerformanceService performanceService;
+        private IAssetDiagnostics assetDiagnostics;
+        private IPoolDiagnostics poolDiagnostics;
+        private IAudioDiagnostics audioDiagnostics;
+        private IInputDiagnostics inputDiagnostics;
+        private readonly StringBuilder diagnosticsText = new StringBuilder(384);
+        private MobileDiagnosticsSampler sampler;
         private bool isFpsLocked;
-        private int frameCount;
-        private float timeAccumulator;
         private int latestRawFps;
-        private int lastDisplayedFps = -1;
         private int lastDisplayedRawFps = -1;
+        private string lastDiagnosticsText;
+
+        [Inject]
+        public void Construct(
+            IPerformanceDiagnosticsControl performanceControl,
+            IPerformanceService performanceService,
+            IAssetDiagnostics assetDiagnostics,
+            IPoolDiagnostics poolDiagnostics,
+            IAudioDiagnostics audioDiagnostics,
+            IInputDiagnostics inputDiagnostics)
+        {
+            this.performanceControl = performanceControl;
+            this.performanceService = performanceService;
+            this.assetDiagnostics = assetDiagnostics;
+            this.poolDiagnostics = poolDiagnostics;
+            this.audioDiagnostics = audioDiagnostics;
+            this.inputDiagnostics = inputDiagnostics;
+            RecreateSampler();
+        }
 
         private void Awake()
         {
-            originalTargetFrameRate = Application.targetFrameRate;
-            originalVSyncCount = QualitySettings.vSyncCount;
-
             if (!showFPS)
             {
                 gameObject.SetActive(false);
                 return;
             }
 
+#if !UNITY_EDITOR
+            if (!Debug.isDebugBuild && !includeInReleaseBuild)
+            {
+                gameObject.SetActive(false);
+            }
+#endif
+        }
+
+        private void Start()
+        {
             if (lockFpsOnStart)
             {
                 LockFps(defaultLockedTargetFrameRate);
@@ -50,11 +87,13 @@ namespace HP.Framework.Diagnostics
             BindButtons();
             ApplyFpsCounterVisibility();
             RefreshLockStateText();
+            RecreateSampler();
         }
 
         private void OnDisable()
         {
             UnbindButtons();
+            DisposeSampler();
         }
 
         private void OnDestroy()
@@ -63,28 +102,33 @@ namespace HP.Framework.Diagnostics
             {
                 RestoreOriginalFrameRate();
             }
+
+            DisposeSampler();
         }
 
         private void Update()
         {
             float rawDelta = Time.unscaledDeltaTime;
             latestRawFps = rawDelta > 0f ? Mathf.RoundToInt(1f / rawDelta) : 0;
-            frameCount++;
-            timeAccumulator += rawDelta;
+            if (sampler == null)
+            {
+                RecreateSampler();
+            }
 
-            if (timeAccumulator < refreshInterval)
+            if (sampler == null
+                || !sampler.TrySample(
+                    Time.unscaledTimeAsDouble,
+                    rawDelta,
+                    out MobileDiagnosticsSnapshot snapshot))
             {
                 return;
             }
 
-            int averageFps = timeAccumulator > 0f
-                ? Mathf.RoundToInt(frameCount / timeAccumulator)
-                : 0;
-
-            if (txtFps != null && txtFps.enabled && averageFps != lastDisplayedFps)
+            string formatted = BuildDiagnosticsText(snapshot);
+            if (txtFps != null && txtFps.enabled && formatted != lastDiagnosticsText)
             {
-                lastDisplayedFps = averageFps;
-                txtFps.text = "FPS (Average): " + averageFps;
+                lastDiagnosticsText = formatted;
+                txtFps.text = formatted;
             }
 
             if (txtRawFps != null && txtRawFps.enabled && latestRawFps != lastDisplayedRawFps)
@@ -93,8 +137,6 @@ namespace HP.Framework.Diagnostics
                 txtRawFps.text = "FPS (Realtime): " + latestRawFps;
             }
 
-            frameCount = 0;
-            timeAccumulator = 0f;
         }
 
         public void LockFps60() => LockFps(60);
@@ -115,9 +157,14 @@ namespace HP.Framework.Diagnostics
                 return;
             }
 
+            if (performanceControl == null)
+            {
+                Debug.LogWarning("[Diagnostics] FPS lock requires IPerformanceDiagnosticsControl injection.", this);
+                return;
+            }
+
             isFpsLocked = true;
-            QualitySettings.vSyncCount = 0;
-            Application.targetFrameRate = targetFrameRate;
+            performanceControl.SetFrameRateOverride(targetFrameRate);
             RefreshLockStateText();
         }
 
@@ -130,8 +177,7 @@ namespace HP.Framework.Diagnostics
         private void RestoreOriginalFrameRate()
         {
             isFpsLocked = false;
-            QualitySettings.vSyncCount = originalVSyncCount;
-            Application.targetFrameRate = originalTargetFrameRate;
+            performanceControl?.ClearFrameRateOverride();
         }
 
         private void BindButtons()
@@ -176,8 +222,8 @@ namespace HP.Framework.Diagnostics
                 return;
             }
 
-            txtFrameRateLockState.text = isFpsLocked
-                ? $"FPS LOCK {Application.targetFrameRate}"
+            txtFrameRateLockState.text = isFpsLocked && performanceControl != null
+                ? $"FPS LOCK {performanceControl.EffectiveTargetFrameRate}"
                 : "FPS LOCK OFF";
         }
 
@@ -191,6 +237,129 @@ namespace HP.Framework.Diagnostics
             if (txtRawFps != null)
             {
                 txtRawFps.enabled = showFpsCounter;
+            }
+        }
+
+        private void RecreateSampler()
+        {
+            if (!isActiveAndEnabled)
+            {
+                return;
+            }
+
+            DisposeSampler();
+            sampler = new MobileDiagnosticsSampler(
+                performanceService,
+                assetDiagnostics,
+                poolDiagnostics,
+                audioDiagnostics,
+                inputDiagnostics,
+                new UnityDiagnosticsPlatformMetrics(),
+                refreshInterval);
+        }
+
+        private void DisposeSampler()
+        {
+            sampler?.Dispose();
+            sampler = null;
+        }
+
+        private string BuildDiagnosticsText(MobileDiagnosticsSnapshot snapshot)
+        {
+            diagnosticsText.Clear();
+            diagnosticsText.Append("FPS ")
+                .Append(Mathf.RoundToInt(snapshot.AverageFps))
+                .Append(" | ")
+                .Append(snapshot.FrameTimeMilliseconds.ToString("0.0"))
+                .Append(" ms | target ")
+                .Append(snapshot.TargetFrameRate)
+                .Append(" | ")
+                .Append(snapshot.PerformanceTier)
+                .AppendLine();
+
+            diagnosticsText.Append("CPU/GPU ");
+            if (snapshot.FrameTimingAvailable)
+            {
+                diagnosticsText.Append(snapshot.CpuFrameMilliseconds.ToString("0.0"))
+                    .Append('/')
+                    .Append(snapshot.GpuFrameMilliseconds.ToString("0.0"))
+                    .Append(" ms");
+            }
+            else
+            {
+                diagnosticsText.Append("n/a");
+            }
+
+            diagnosticsText.Append(" | managed ")
+                .Append((snapshot.ManagedMemoryBytes / (1024f * 1024f)).ToString("0.0"))
+                .Append(" MB | GC ");
+            if (snapshot.GcAllocatedAvailable)
+            {
+                diagnosticsText.Append(snapshot.GcAllocatedBytes / 1024f)
+                    .Append(" KB");
+            }
+            else
+            {
+                diagnosticsText.Append("n/a");
+            }
+
+            diagnosticsText.AppendLine();
+            AppendFrameworkStats(snapshot);
+            return diagnosticsText.ToString();
+        }
+
+        private void AppendFrameworkStats(MobileDiagnosticsSnapshot snapshot)
+        {
+            if (snapshot.PoolStatsAvailable)
+            {
+                diagnosticsText.Append("Pool ")
+                    .Append(snapshot.PoolStats.ActiveInstanceCount)
+                    .Append(" active/")
+                    .Append(snapshot.PoolStats.InactiveInstanceCount)
+                    .Append(" idle");
+            }
+            else
+            {
+                diagnosticsText.Append("Pool n/a");
+            }
+
+            if (snapshot.AssetStatsAvailable)
+            {
+                diagnosticsText.Append(" | Asset ")
+                    .Append(snapshot.AssetStats.LoadedAssetCount)
+                    .Append(" loaded/")
+                    .Append(snapshot.AssetStats.ActiveReferenceCount)
+                    .Append(" refs");
+            }
+            else
+            {
+                diagnosticsText.Append(" | Asset n/a");
+            }
+
+            if (snapshot.AudioStatsAvailable)
+            {
+                diagnosticsText.Append(" | Audio ")
+                    .Append(snapshot.AudioStats.ActiveSfxVoices)
+                    .Append('/')
+                    .Append(snapshot.AudioStats.MaxSfxVoices);
+            }
+            else
+            {
+                diagnosticsText.Append(" | Audio n/a");
+            }
+
+            if (snapshot.InputStatsAvailable)
+            {
+                diagnosticsText.Append(" | Input ")
+                    .Append(string.IsNullOrWhiteSpace(snapshot.InputStats.PrimaryMapName)
+                        ? "none"
+                        : snapshot.InputStats.PrimaryMapName)
+                    .Append(" +")
+                    .Append(snapshot.InputStats.ActiveLeaseCount);
+            }
+            else
+            {
+                diagnosticsText.Append(" | Input n/a");
             }
         }
     }

@@ -24,6 +24,14 @@ Install Input System when the project needs `InputManager`. The rest of the fram
 
 UGUI remains required by the current framework UI stack.
 
+## Asset-key UI throws from a synchronous API
+
+This is intentional. `ShowScreen<T>()` and `OpenPopup<T>()` support direct-prefab entries only. Use `ShowScreenAsync<T>()` or `OpenPopupAsync<T>()` for `AssetKey` entries so loading, cancellation, and lease ownership are explicit.
+
+## Audio or diagnostics metric shows unavailable
+
+Asset-key audio requires `IAssetLeaseProvider` from the root scope. Diagnostics renders unsupported `ProfilerRecorder`/`FrameTimingManager` counters and absent optional Input diagnostics as `n/a` rather than throwing.
+
 ## EventSystem has no input module in the reusable template
 
 This is intentional. The reusable Bootstrap template keeps optional package components out of the serialized template where required for import safety.
@@ -77,7 +85,7 @@ Concurrent operations targeting the same file are serialized so `.tmp`/`.bak` op
 
 ## Duplicate Resources loads
 
-`ResourcesAssetProvider` serializes same-key requests. One caller performs the load; later same-key callers reuse the cached result instead of issuing duplicate Resources loads.
+`ResourcesAssetProvider` shares same-key compatible requests through one pending record. If a request for the same key uses an incompatible type, the provider fails descriptively instead of starting a duplicate typed load.
 
 ## Frustum checks are called for many objects
 

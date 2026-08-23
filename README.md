@@ -1,6 +1,6 @@
 # HP Framework
 
-HP Framework is a VContainer-first Unity 6 game foundation built around explicit lifetime ownership, persistent application services, scene/feature scopes, scoped UI/pooling/events, and reusable runtime utilities.
+HP Framework is a VContainer-first Unity 6 game foundation built around explicit lifetime ownership, persistent application services, async application readiness, mobile performance policy, scene/feature scopes, scoped UI/pooling/events, and reusable runtime utilities.
 
 During active development, the framework is intended to live directly under `Assets/Plugins/HPFramework` so its source remains editable inside the consuming Unity project. The repository keeps a UPM-compatible layout for future Git/local Package Manager distribution.
 
@@ -60,7 +60,13 @@ Assets/Plugins/HPFramework/
 └── Settings/
     ├── VContainerSettings.asset
     ├── DefaultAudioLibrary.asset
-    └── DefaultUICatalog.asset
+    ├── DefaultUICatalog.asset
+    └── Performance/
+        ├── Low.asset
+        ├── Medium.asset
+        ├── High.asset
+        ├── PerformanceCatalog.asset
+        └── DevicePerformancePolicy.asset
 ```
 
 The reusable Bootstrap source remains tracked at `Editor/Templates/Bootstrap.prefab`.
@@ -116,7 +122,17 @@ Children inherit parent registrations unless they intentionally shadow them. Pre
 
 A service that must be scene-owned and shared as the exact same instance by all feature children should be registered as `Lifetime.Singleton` inside the scene scope. Use `Lifetime.Scoped` when each child container should intentionally receive its own instance.
 
-Framework runtime code avoids `LifetimeScope.Find<T>()` and `.Container.Resolve<T>()` service-locator patterns. Prefer constructor/method injection and VContainer lifecycle entry points.
+Framework runtime code avoids `LifetimeScope.Find<T>()` and `.Container.Resolve<T>()` service-locator patterns. Prefer constructor/method injection and VContainer lifecycle entry points. Async application/content/platform readiness is coordinated separately by `IStartupCoordinator`; synchronous DI wiring stays in `IInitializable`. Bootstrap registers the coordinator but the application boot flow explicitly starts `RunAsync()` so container construction is not treated as application readiness.
+
+Runtime frame-rate and Unity Quality actuation is owned by `PerformanceService`; Settings persists user/auto preferences only. See `Documentation~/performance.md` for the apply order, frame-pacing policy and extension hooks.
+
+Audio playback uses a hard SFX voice ceiling. `AudioLibrarySO` entries can keep direct clips or opt into asset-key loading; active asset-backed voices and music retain their lease until stopped or replaced. See `Documentation~/audio.md`.
+
+Additional input maps support explicit `IInputMapLease` ref-count ownership. Use leases whenever more than one feature may require the same overlay map; primary maps retain switch semantics. See `Documentation~/input.md`.
+
+The opt-in mobile diagnostics HUD samples FPS, frame time, memory and framework service snapshots at a throttled interval. It is enabled in Editor/Development builds and excluded from production behavior unless explicitly opted in. See `Documentation~/mobile-diagnostics.md`.
+
+Haptics expose semantic feedback (`Selection`, impacts, success/warning/error) through platform backends while retaining the duration-based compatibility API. See `Documentation~/haptics.md`.
 
 ## UI runtime notes
 
@@ -160,6 +176,11 @@ Start with:
 - [Architecture](Documentation~/architecture.md)
 - [Lifetime scopes](Documentation~/scopes.md)
 - [UI and pooling](Documentation~/ui-and-pooling.md)
+- [Audio](Documentation~/audio.md)
+- [Input](Documentation~/input.md)
+- [Mobile diagnostics](Documentation~/mobile-diagnostics.md)
+- [Haptics](Documentation~/haptics.md)
+- [Mobile foundation](Documentation~/mobile-foundation.md)
 - [Runtime performance](Documentation~/runtime-performance.md)
 - [Troubleshooting](Documentation~/troubleshooting.md)
 

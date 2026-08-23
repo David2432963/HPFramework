@@ -1,5 +1,8 @@
 ﻿using UnityEngine;
 
+using System.Threading;
+using Cysharp.Threading.Tasks;
+
 namespace HP.Framework.Audio
 {
     /// <summary>
@@ -13,6 +16,7 @@ namespace HP.Framework.Audio
 
         void PlayMusic(AudioClip clip, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f, float startTime = 0f);
         void PlayMusic(string key, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f);
+        UniTask PlayMusicAsync(string key, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f, CancellationToken cancellationToken = default);
         void OverrideMusic(AudioClip clip, bool loop = true, float fadeDuration = 0.5f, float volumeScale = 1f);
         void RestoreMusic(float fadeDuration = 0.5f);
         void PauseMusic();
@@ -21,6 +25,7 @@ namespace HP.Framework.Audio
 
         void PlaySfx(AudioClip clip, float volumeScale = 1f);
         void PlaySfx(string key, float volumeScale = 1f);
+        UniTask PlaySfxAsync(string key, float volumeScale = 1f, CancellationToken cancellationToken = default);
         void PlayRandomSfxInCluster(string clusterId, float volumeScale = 1f);
         void PlaySequentialSfxInCluster(string clusterId, float volumeScale = 1f);
 
@@ -43,5 +48,4 @@ namespace HP.Framework.Audio
         float GetSfxVolume();
     }
 }
-
 

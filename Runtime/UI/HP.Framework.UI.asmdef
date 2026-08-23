@@ -3,8 +3,10 @@
     "rootNamespace":  "HP.Framework.UI",
     "references":  [
                        "HP.Framework.Core",
+                       "HP.Framework.Assets",
                        "HP.Framework.Audio",
                        "HP.Framework.Pooling",
+                       "UniTask",
                        "VContainer",
                        "Unity.UGUI"
                    ],

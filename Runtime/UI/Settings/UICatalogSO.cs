@@ -4,6 +4,12 @@ using UnityEngine;
 
 namespace HP.Framework.UI
 {
+    public enum UIAssetMode
+    {
+        DirectPrefab = 0,
+        AssetKey = 1
+    }
+
     [CreateAssetMenu(fileName = "UICatalogSO", menuName = "HP Framework/UI/UI Catalog")]
     public sealed class UICatalogSO : ScriptableObject
     {
@@ -67,9 +73,23 @@ namespace HP.Framework.UI
             }
         }
 
+        public bool TryValidate(out string errorMessage)
+        {
+            var errors = new List<string>();
+            ValidateEntryData(popupEntries, typeof(BasePopup), "Popup", errors);
+            ValidateEntryData(screenEntries, typeof(BaseScreen), "Screen", errors);
+            errorMessage = string.Join("\n", errors);
+            return errors.Count == 0;
+        }
+
 #if UNITY_EDITOR
         private void OnValidate()
         {
+            if (!TryValidate(out string errorMessage))
+            {
+                Debug.LogWarning(errorMessage, this);
+            }
+
             ValidateEntries(popupEntries, typeof(BasePopup), "Popup");
             ValidateEntries(screenEntries, typeof(BaseScreen), "Screen");
         }
@@ -115,17 +135,32 @@ namespace HP.Framework.UI
         [Serializable]
         public sealed class UIEntry
         {
+            [SerializeField] private UIAssetMode assetMode;
             [SerializeField] private GameObject prefab;
+            [SerializeField] private string assetKey;
+            [Tooltip("Assembly-qualified BasePopup/BaseScreen type. Required for AssetKey entries.")]
+            [SerializeField] private string runtimeTypeName;
             [SerializeField] private bool preloadOnBoot;
             [SerializeField] private bool cacheAfterClose = true;
 
+            public UIAssetMode AssetMode => assetMode;
             public GameObject Prefab => prefab;
+            public string AssetKey => assetKey;
+            public string RuntimeTypeName => runtimeTypeName;
             public bool PreloadOnBoot => preloadOnBoot;
             public bool CacheAfterClose => cacheAfterClose;
 
             public bool TryGetRuntimeType(out Type runtimeType)
             {
                 runtimeType = null;
+
+                if (assetMode == UIAssetMode.AssetKey)
+                {
+                    runtimeType = string.IsNullOrWhiteSpace(runtimeTypeName)
+                        ? null
+                        : Type.GetType(runtimeTypeName, throwOnError: false);
+                    return runtimeType != null;
+                }
 
                 GameObject currentPrefab = prefab;
                 if (currentPrefab == null)
@@ -154,6 +189,53 @@ namespace HP.Framework.UI
                 catch (MissingReferenceException)
                 {
                     return false;
+                }
+            }
+        }
+
+        private static void ValidateEntryData(
+            List<UIEntry> entries,
+            Type expectedType,
+            string label,
+            List<string> errors)
+        {
+            var types = new HashSet<Type>();
+            for (int i = 0; i < entries.Count; i++)
+            {
+                UIEntry entry = entries[i];
+                if (entry == null)
+                {
+                    errors.Add($"{label} entry at index {i} is null.");
+                    continue;
+                }
+
+                if (entry.AssetMode == UIAssetMode.DirectPrefab && entry.Prefab == null)
+                {
+                    errors.Add($"{label} entry at index {i} has no direct prefab.");
+                    continue;
+                }
+
+                if (entry.AssetMode == UIAssetMode.AssetKey
+                    && string.IsNullOrWhiteSpace(entry.AssetKey))
+                {
+                    errors.Add($"{label} AssetKey entry at index {i} has no asset key.");
+                }
+
+                if (!entry.TryGetRuntimeType(out Type runtimeType))
+                {
+                    errors.Add($"{label} entry at index {i} has no valid runtime type.");
+                    continue;
+                }
+
+                if (!expectedType.IsAssignableFrom(runtimeType))
+                {
+                    errors.Add(
+                        $"{label} entry '{runtimeType.FullName}' does not derive from {expectedType.Name}.");
+                }
+
+                if (!types.Add(runtimeType))
+                {
+                    errors.Add($"Duplicate {label.ToLowerInvariant()} type '{runtimeType.FullName}'.");
                 }
             }
         }
@@ -192,5 +274,4 @@ namespace HP.Framework.UI
         }
     }
 }
-
 

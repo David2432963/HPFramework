@@ -2,6 +2,9 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.Threading;
+    using Cysharp.Threading.Tasks;
+    using HP.Framework.Assets;
     using UnityEngine;
     using UnityEngine.SceneManagement;
     using UnityEngine.Serialization;
@@ -17,6 +20,29 @@
     /// </summary>
     public class UIManager : MonoBehaviour, IGlobalUIService, IInitializable
     {
+        private sealed class PendingUICreation
+        {
+            public PendingUICreation(Type type, UICatalogSO.UIEntry entry, bool isPopup)
+            {
+                Type = type;
+                Entry = entry;
+                IsPopup = isPopup;
+                Completion = new UniTaskCompletionSource<Component>();
+            }
+
+            public Type Type { get; }
+            public UICatalogSO.UIEntry Entry { get; }
+            public bool IsPopup { get; }
+            public UniTaskCompletionSource<Component> Completion { get; }
+            public int WaiterCount { get; set; }
+            public bool Completed { get; set; }
+            public bool Claimed { get; set; }
+            public bool Invalidated { get; set; }
+            public GameObject Instance { get; set; }
+            public Component View { get; set; }
+            public IAssetLease<GameObject> Lease { get; set; }
+        }
+
         [Header("UI Roots & Camera")]
         [FormerlySerializedAs("screenCanvas")]
         [SerializeField] private RectTransform screenRoot;
@@ -38,9 +64,14 @@
         private readonly Dictionary<Type, UICatalogSO.UIEntry> screenCatalogEntries = new Dictionary<Type, UICatalogSO.UIEntry>();
         private readonly List<BasePopup> activePopupsCache = new List<BasePopup>();
         private readonly List<BaseScreen> screensToDestroyCache = new List<BaseScreen>();
+        private readonly Dictionary<Type, IAssetLease<GameObject>> viewAssetLeases =
+            new Dictionary<Type, IAssetLease<GameObject>>();
+        private readonly Dictionary<Type, PendingUICreation> pendingCreations =
+            new Dictionary<Type, PendingUICreation>();
 
         private IPoolService poolService;
         private IObjectResolver objectResolver;
+        private IAssetLeaseProvider assetLeaseProvider;
         private bool initialized;
 
         public event Action<BasePopup> PopupOpening;
@@ -53,10 +84,14 @@
         public Transform NotificationRoot => notificationRoot != null ? notificationRoot : transform;
 
         [Inject]
-        public void Construct(IPoolService poolService, IObjectResolver objectResolver)
+        public void Construct(
+            IPoolService poolService,
+            IObjectResolver objectResolver,
+            IAssetLeaseProvider assetLeaseProvider)
         {
             this.poolService = poolService;
             this.objectResolver = objectResolver;
+            this.assetLeaseProvider = assetLeaseProvider;
         }
 
         private void OnEnable()
@@ -69,6 +104,13 @@
             SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
+        private void OnDestroy()
+        {
+            ClearPopups();
+            ClearScreens();
+            CancelPendingCreations();
+        }
+
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             AttachUICameraToMainCamera();
@@ -79,7 +121,7 @@
             AttachUICameraTo(Camera.main);
         }
 
-        public void AttachUICameraTo(Camera mainCamera)
+        public void AttachUICameraTo(Camera baseCamera)
         {
             if (uiCamera == null)
             {
@@ -88,12 +130,12 @@
 
             URPCameraStackUtility.ConfigureAsOverlay(uiCamera);
 
-            if (mainCamera == null)
+            if (baseCamera == null)
             {
                 return;
             }
 
-            URPCameraStackUtility.AttachOverlay(mainCamera, uiCamera);
+            URPCameraStackUtility.AttachOverlay(baseCamera, uiCamera);
         }
 
         public void Initialize()
@@ -139,6 +181,7 @@
                 throw new ArgumentNullException(nameof(catalog));
             }
 
+            CancelPendingCreations();
             ClearPopups();
             ClearScreens();
             uiCatalog = catalog;
@@ -211,6 +254,38 @@
             }
 
             return null;
+        }
+
+        public UniTask<T> OpenPopupAsync<T>(CancellationToken cancellationToken = default)
+            where T : BasePopup
+        {
+            return OpenPopupAsync<T>(null, cancellationToken);
+        }
+
+        public async UniTask<T> OpenPopupAsync<T>(
+            Action<T> configureBeforeShow,
+            CancellationToken cancellationToken = default)
+            where T : BasePopup
+        {
+            EnsureInitialized();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryGetOrCreateDirectPopup(typeof(T), out BasePopup directPopup))
+            {
+                T typedDirect = directPopup as T;
+                configureBeforeShow?.Invoke(typedDirect);
+                typedDirect?.Show();
+                return typedDirect;
+            }
+
+            Component created = await GetOrCreateAssetViewAsync(
+                typeof(T),
+                isPopup: true,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            T popup = created as T;
+            configureBeforeShow?.Invoke(popup);
+            popup?.Show();
+            return popup;
         }
 
         public T GetOrCreatePopup<T>() where T : BasePopup
@@ -314,9 +389,13 @@
                 {
                     popup.gameObject.SetActive(false);
                 }
-                popup.Destroy();
+                DestroyOwnedPopup(popup);
             }
             activePopupsCache.Clear();
+            foreach (Type type in popupCatalogEntries.Keys)
+            {
+                ReleaseViewAssetLease(type);
+            }
         }
 
         public T ShowScreen<T>() where T : BaseScreen
@@ -336,6 +415,38 @@
             }
 
             return null;
+        }
+
+        public UniTask<T> ShowScreenAsync<T>(CancellationToken cancellationToken = default)
+            where T : BaseScreen
+        {
+            return ShowScreenAsync<T>(null, cancellationToken);
+        }
+
+        public async UniTask<T> ShowScreenAsync<T>(
+            Action<T> configureBeforeShow,
+            CancellationToken cancellationToken = default)
+            where T : BaseScreen
+        {
+            EnsureInitialized();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryGetOrCreateDirectScreen(typeof(T), out BaseScreen directScreen))
+            {
+                T typedDirect = directScreen as T;
+                configureBeforeShow?.Invoke(typedDirect);
+                typedDirect?.Show();
+                return typedDirect;
+            }
+
+            Component created = await GetOrCreateAssetViewAsync(
+                typeof(T),
+                isPopup: false,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            T screen = created as T;
+            configureBeforeShow?.Invoke(screen);
+            screen?.Show();
+            return screen;
         }
 
         public T GetOrCreateScreen<T>() where T : BaseScreen
@@ -372,7 +483,7 @@
                 if (ShouldDestroyAfterHide(screen))
                 {
                     UnregisterScreen(screen);
-                    screen.Destroy();
+                    DestroyOwnedScreen(screen);
                 }
             }
         }
@@ -391,7 +502,7 @@
                 if (ShouldDestroyAfterHide(screen))
                 {
                     UnregisterScreen(screen);
-                    screen.Destroy();
+                    DestroyOwnedScreen(screen);
                 }
                 return true;
             }
@@ -422,9 +533,13 @@
                 {
                     screen.gameObject.SetActive(false);
                 }
-                screen.Destroy();
+                DestroyOwnedScreen(screen);
             }
             screensToDestroyCache.Clear();
+            foreach (Type type in screenCatalogEntries.Keys)
+            {
+                ReleaseViewAssetLease(type);
+            }
         }
 
         public void LockInput(bool isLock)
@@ -458,7 +573,7 @@
             if (popup != null && ShouldDestroyAfterHide(popup))
             {
                 UnregisterPopup(popup);
-                popup.Destroy();
+                DestroyOwnedPopup(popup);
             }
         }
 
@@ -525,60 +640,349 @@
 
         private bool TryGetOrCreatePopup(Type type, out BasePopup popup)
         {
+            EnsureInitialized();
             if (popups.TryGetValue(type, out popup) && popup != null)
             {
                 return true;
             }
 
-            if (popupCatalogEntries.TryGetValue(type, out var entry) && entry.Prefab != null)
+            if (popupCatalogEntries.TryGetValue(type, out UICatalogSO.UIEntry entry)
+                && entry.AssetMode == UIAssetMode.AssetKey)
             {
-                GameObject instance = InstantiateWithVContainer(entry.Prefab, PopupRoot);
-                popup = instance != null ? instance.GetComponent<BasePopup>() : null;
-                if (popup != null)
-                {
-                    popup.gameObject.SetActive(false);
-                    RegisterPopup(popup);
-                    popup.Initialize();
-                    return true;
-                }
-
-                if (instance != null)
-                {
-                    Destroy(instance);
-                }
+                throw CreateAsyncRequiredException(type, isPopup: true);
             }
 
-            popup = null;
-            return false;
+            return TryGetOrCreateDirectPopup(type, out popup);
         }
 
         private bool TryGetOrCreateScreen(Type type, out BaseScreen screen)
+        {
+            EnsureInitialized();
+            if (screens.TryGetValue(type, out screen) && screen != null)
+            {
+                return true;
+            }
+
+            if (screenCatalogEntries.TryGetValue(type, out UICatalogSO.UIEntry entry)
+                && entry.AssetMode == UIAssetMode.AssetKey)
+            {
+                throw CreateAsyncRequiredException(type, isPopup: false);
+            }
+
+            return TryGetOrCreateDirectScreen(type, out screen);
+        }
+
+        private bool TryGetOrCreateDirectPopup(Type type, out BasePopup popup)
+        {
+            if (popups.TryGetValue(type, out popup) && popup != null)
+            {
+                return true;
+            }
+
+            if (!popupCatalogEntries.TryGetValue(type, out UICatalogSO.UIEntry entry)
+                || entry.AssetMode != UIAssetMode.DirectPrefab
+                || entry.Prefab == null)
+            {
+                popup = null;
+                return false;
+            }
+
+            GameObject instance = InstantiateWithVContainer(entry.Prefab, PopupRoot);
+            popup = instance != null ? instance.GetComponent<BasePopup>() : null;
+            if (popup != null)
+            {
+                popup.gameObject.SetActive(false);
+                RegisterPopup(popup);
+                popup.Initialize();
+                return true;
+            }
+
+            if (instance != null)
+            {
+                Destroy(instance);
+            }
+
+            return false;
+        }
+
+        private bool TryGetOrCreateDirectScreen(Type type, out BaseScreen screen)
         {
             if (screens.TryGetValue(type, out screen) && screen != null)
             {
                 return true;
             }
 
-            if (screenCatalogEntries.TryGetValue(type, out var entry) && entry.Prefab != null)
+            if (!screenCatalogEntries.TryGetValue(type, out UICatalogSO.UIEntry entry)
+                || entry.AssetMode != UIAssetMode.DirectPrefab
+                || entry.Prefab == null)
             {
-                GameObject instance = InstantiateWithVContainer(entry.Prefab, ScreenRoot);
-                screen = instance != null ? instance.GetComponent<BaseScreen>() : null;
-                if (screen != null)
+                screen = null;
+                return false;
+            }
+
+            GameObject instance = InstantiateWithVContainer(entry.Prefab, ScreenRoot);
+            screen = instance != null ? instance.GetComponent<BaseScreen>() : null;
+            if (screen != null)
+            {
+                screen.gameObject.SetActive(false);
+                RegisterScreen(screen);
+                screen.Initialize();
+                return true;
+            }
+
+            if (instance != null)
+            {
+                Destroy(instance);
+            }
+
+            return false;
+        }
+
+        private async UniTask<Component> GetOrCreateAssetViewAsync(
+            Type type,
+            bool isPopup,
+            CancellationToken cancellationToken)
+        {
+            if (isPopup
+                && popups.TryGetValue(type, out BasePopup existingPopup)
+                && existingPopup != null)
+            {
+                return existingPopup;
+            }
+
+            if (!isPopup
+                && screens.TryGetValue(type, out BaseScreen existingScreen)
+                && existingScreen != null)
+            {
+                return existingScreen;
+            }
+
+            Dictionary<Type, UICatalogSO.UIEntry> catalog = isPopup
+                ? popupCatalogEntries
+                : screenCatalogEntries;
+            if (!catalog.TryGetValue(type, out UICatalogSO.UIEntry entry))
+            {
+                return null;
+            }
+
+            if (entry.AssetMode == UIAssetMode.DirectPrefab)
+            {
+                return isPopup
+                    ? TryGetOrCreateDirectPopup(type, out BasePopup popup) ? popup : null
+                    : TryGetOrCreateDirectScreen(type, out BaseScreen screen) ? screen : null;
+            }
+
+            if (assetLeaseProvider == null)
+            {
+                throw new InvalidOperationException(
+                    $"UI type '{type.FullName}' uses AssetKey mode, but IAssetLeaseProvider is not configured.");
+            }
+
+            bool startCreation = false;
+            if (!pendingCreations.TryGetValue(type, out PendingUICreation pending))
+            {
+                pending = new PendingUICreation(type, entry, isPopup);
+                pendingCreations.Add(type, pending);
+                startCreation = true;
+            }
+
+            pending.WaiterCount++;
+            if (startCreation)
+            {
+                CreatePendingViewAsync(pending).Forget();
+            }
+
+            try
+            {
+                Component view = await pending.Completion.Task
+                    .AttachExternalCancellation(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!pending.Claimed)
                 {
-                    screen.gameObject.SetActive(false);
-                    RegisterScreen(screen);
-                    screen.Initialize();
-                    return true;
+                    ClaimPendingView(pending);
                 }
 
+                return view;
+            }
+            finally
+            {
+                if (pending.WaiterCount > 0)
+                {
+                    pending.WaiterCount--;
+                }
+
+                if (pending.Completed && pending.WaiterCount == 0 && !pending.Claimed)
+                {
+                    CleanupPendingView(pending);
+                }
+            }
+        }
+
+        private async UniTask CreatePendingViewAsync(PendingUICreation pending)
+        {
+            IAssetLease<GameObject> lease = null;
+            GameObject instance = null;
+            try
+            {
+                lease = await assetLeaseProvider.AcquireAsync<GameObject>(
+                    pending.Entry.AssetKey,
+                    CancellationToken.None);
+                if (pending.Invalidated)
+                {
+                    lease?.Dispose();
+                    return;
+                }
+
+                if (lease == null || !lease.IsValid || lease.Asset == null)
+                {
+                    throw new InvalidOperationException(
+                        $"UI asset '{pending.Entry.AssetKey}' could not be loaded.");
+                }
+
+                Transform parent = pending.IsPopup ? PopupRoot : ScreenRoot;
+                instance = InstantiateWithVContainer(lease.Asset, parent);
+                Component view = instance != null ? instance.GetComponent(pending.Type) : null;
+                if (view == null)
+                {
+                    throw new InvalidOperationException(
+                        $"UI asset '{pending.Entry.AssetKey}' does not contain component '{pending.Type.FullName}'.");
+                }
+
+                instance.SetActive(false);
+                pending.Lease = lease;
+                pending.Instance = instance;
+                pending.View = view;
+                pending.Completed = true;
+                pending.Completion.TrySetResult(view);
+                if (pending.WaiterCount == 0)
+                {
+                    CleanupPendingView(pending);
+                }
+            }
+            catch (Exception exception)
+            {
                 if (instance != null)
                 {
                     Destroy(instance);
                 }
+
+                lease?.Dispose();
+                pending.Completed = true;
+                pending.Completion.TrySetException(exception);
+                if (pending.WaiterCount == 0)
+                {
+                    CleanupPendingView(pending);
+                }
+            }
+        }
+
+        private void ClaimPendingView(PendingUICreation pending)
+        {
+            if (pending.Invalidated || pending.View == null)
+            {
+                throw new InvalidOperationException(
+                    $"Pending UI creation for '{pending.Type.FullName}' is no longer valid.");
             }
 
-            screen = null;
-            return false;
+            if (pending.IsPopup)
+            {
+                BasePopup popup = pending.View as BasePopup;
+                RegisterPopup(popup);
+                popup.Initialize();
+            }
+            else
+            {
+                BaseScreen screen = pending.View as BaseScreen;
+                RegisterScreen(screen);
+                screen.Initialize();
+            }
+
+            if (viewAssetLeases.TryGetValue(pending.Type, out IAssetLease<GameObject> oldLease))
+            {
+                oldLease.Dispose();
+            }
+
+            viewAssetLeases[pending.Type] = pending.Lease;
+            pending.Lease = null;
+            pending.Instance = null;
+            pending.Claimed = true;
+            pendingCreations.Remove(pending.Type);
+        }
+
+        private void CleanupPendingView(PendingUICreation pending)
+        {
+            if (pending.Instance != null)
+            {
+                Destroy(pending.Instance);
+                pending.Instance = null;
+            }
+
+            pending.Lease?.Dispose();
+            pending.Lease = null;
+            if (pendingCreations.TryGetValue(pending.Type, out PendingUICreation current)
+                && ReferenceEquals(current, pending))
+            {
+                pendingCreations.Remove(pending.Type);
+            }
+        }
+
+        private void CancelPendingCreations()
+        {
+            while (pendingCreations.Count > 0)
+            {
+                PendingUICreation pending = null;
+                foreach (PendingUICreation candidate in pendingCreations.Values)
+                {
+                    pending = candidate;
+                    break;
+                }
+
+                pending.Invalidated = true;
+                pending.Completed = true;
+                pending.Completion.TrySetException(new InvalidOperationException(
+                    $"UI catalog ownership changed while '{pending.Type.FullName}' was loading."));
+                CleanupPendingView(pending);
+            }
+        }
+
+        private void DestroyOwnedPopup(BasePopup popup)
+        {
+            Type type = popup.GetType();
+            popup.Destroy();
+            ReleaseViewAssetLease(type);
+        }
+
+        private void DestroyOwnedScreen(BaseScreen screen)
+        {
+            Type type = screen.GetType();
+            screen.Destroy();
+            ReleaseViewAssetLease(type);
+        }
+
+        private void ReleaseViewAssetLease(Type type)
+        {
+            if (viewAssetLeases.TryGetValue(type, out IAssetLease<GameObject> lease))
+            {
+                viewAssetLeases.Remove(type);
+                lease?.Dispose();
+            }
+        }
+
+        private void EnsureInitialized()
+        {
+            if (!initialized)
+            {
+                Initialize();
+            }
+        }
+
+        private static InvalidOperationException CreateAsyncRequiredException(
+            Type type,
+            bool isPopup)
+        {
+            string method = isPopup ? "OpenPopupAsync<T>()" : "ShowScreenAsync<T>()";
+            return new InvalidOperationException(
+                $"UI type '{type.FullName}' uses AssetKey mode. Use {method} instead of the synchronous API.");
         }
 
         private bool ShouldDestroyAfterHide(BasePopup popup)
@@ -621,4 +1025,3 @@
 
 
 }
-

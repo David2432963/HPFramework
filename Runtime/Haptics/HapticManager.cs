@@ -4,7 +4,6 @@
     using UnityEngine;
     using VContainer;
     using VContainer.Unity;
-    using HP.Framework.Common;
     using HP.Framework.Persistence;
 
     /// <summary>
@@ -13,6 +12,7 @@
     public sealed class HapticManager : MonoBehaviour, IHapticService, IInitializable, IDisposable
     {
         private ISettingsService settingsService;
+        private IHapticBackend backend;
         private bool isHapticEnabled = true;
 
         [Inject]
@@ -41,6 +41,7 @@
 
         public void Initialize()
         {
+            EnsureBackend();
             if (settingsService == null)
             {
                 return;
@@ -68,7 +69,36 @@
                 return;
             }
 
-            VibrationHelper.Vibrate(milliseconds);
+            EnsureBackend();
+            if (backend.IsAvailable)
+            {
+                backend.Vibrate(milliseconds);
+            }
+        }
+
+        public void Play(HapticType type)
+        {
+            if (!isHapticEnabled)
+            {
+                return;
+            }
+
+            EnsureBackend();
+            if (backend.IsAvailable)
+            {
+                backend.Play(type);
+            }
+        }
+
+        public void ConfigureBackend(IHapticBackend hapticBackend)
+        {
+            if (ReferenceEquals(backend, hapticBackend))
+            {
+                return;
+            }
+
+            backend?.Dispose();
+            backend = hapticBackend ?? throw new ArgumentNullException(nameof(hapticBackend));
         }
 
         public void Dispose()
@@ -77,6 +107,9 @@
             {
                 settingsService.SettingChanged -= OnSettingChanged;
             }
+
+            backend?.Dispose();
+            backend = null;
         }
 
         private void OnSettingChanged(string settingName)
@@ -86,9 +119,13 @@
                 isHapticEnabled = settingsService.VibrationEnabled;
             }
         }
+
+        private void EnsureBackend()
+        {
+            backend ??= HapticBackendFactory.Create();
+        }
     }
 
 
 }
-
 

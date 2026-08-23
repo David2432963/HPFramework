@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections;
 using System.Reflection;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -16,10 +18,50 @@ using HP.Framework.Input;
 using HP.Framework.Lifecycle;
 using HP.Framework.Persistence;
 using HP.Framework.Pooling;
+using HP.Framework.Startup;
 using HP.Framework.UI;
 
 namespace HP.Framework.Tests
 {
+    public sealed class StartupProbeTaskA : IStartupTask
+    {
+        public string Id => "probe-a";
+        public StartupTaskCriticality Criticality => StartupTaskCriticality.Required;
+        public int Attempts { get; private set; }
+
+        public UniTask ExecuteAsync(IProgress<float> progress, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Attempts++;
+            progress?.Report(1f);
+            return UniTask.CompletedTask;
+        }
+    }
+
+    public sealed class StartupProbeTaskB : IStartupTask
+    {
+        public string Id => "probe-b";
+        public StartupTaskCriticality Criticality => StartupTaskCriticality.Required;
+        public int Attempts { get; private set; }
+
+        public UniTask ExecuteAsync(IProgress<float> progress, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Attempts++;
+            progress?.Report(1f);
+            return UniTask.CompletedTask;
+        }
+    }
+
+    public sealed class StartupProbeRootLifetimeScope : RootLifetimeScope
+    {
+        protected override void RegisterApplicationStartupTasks(IContainerBuilder builder)
+        {
+            builder.RegisterStartupTask<StartupProbeTaskA>(0, TimeSpan.Zero);
+            builder.RegisterStartupTask<StartupProbeTaskB>(0, TimeSpan.Zero);
+        }
+    }
+
     public sealed class ScopeTestDependency : System.IDisposable
     {
         public bool IsDisposed { get; private set; }
@@ -190,6 +232,41 @@ namespace HP.Framework.Tests
                 UnityEngine.Object.Destroy(screenObject);
                 UnityEngine.Object.Destroy(sliderObject);
                 UnityEngine.Object.Destroy(textObject);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator StartupRegistrations_ResolveAllTasks_AndRunOnlyWhenExplicitlyStarted()
+        {
+            GameObject root = new GameObject("StartupRegistrationProbe");
+            root.SetActive(false);
+            StartupProbeRootLifetimeScope scope = root.AddComponent<StartupProbeRootLifetimeScope>();
+            scope.autoRun = false;
+            root.SetActive(true);
+            scope.Build();
+
+            try
+            {
+                IStartupCoordinator coordinator = scope.Container.Resolve<IStartupCoordinator>();
+                StartupProbeTaskA first = scope.Container.Resolve<StartupProbeTaskA>();
+                StartupProbeTaskB second = scope.Container.Resolve<StartupProbeTaskB>();
+
+                Assert.That(coordinator.IsReady, Is.False);
+                Assert.That(first.Attempts, Is.Zero);
+                Assert.That(second.Attempts, Is.Zero);
+
+                yield return coordinator.RunAsync().ToCoroutine();
+
+                Assert.That(coordinator.IsReady, Is.True);
+                Assert.That(coordinator.Progress, Is.EqualTo(1f));
+                Assert.That(first.Attempts, Is.EqualTo(1));
+                Assert.That(second.Attempts, Is.EqualTo(1));
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(root);
             }
 
             yield return null;
@@ -491,6 +568,13 @@ namespace HP.Framework.Tests
                 Assert.That(scope.Container.Resolve<IHapticService>(), Is.Not.Null);
                 Assert.That(scope.Container.Resolve<GameSceneManager>(), Is.Not.Null);
                 Assert.That(scope.Container.Resolve<InputManager>(), Is.Not.Null);
+                IStartupCoordinator startup = scope.Container.Resolve<IStartupCoordinator>();
+                Assert.That(startup, Is.Not.Null);
+                Assert.That(startup.IsReady, Is.False,
+                    "Container construction must not implicitly mean async application readiness.");
+                yield return startup.RunAsync().ToCoroutine();
+                Assert.That(startup.IsReady, Is.True);
+                Assert.That(startup.Progress, Is.EqualTo(1f));
 
                 SettingsManager settings = scope.Container.Resolve<SettingsManager>();
                 Assert.That(settings.IsInitialized, Is.True);

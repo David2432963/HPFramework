@@ -39,6 +39,7 @@ namespace HP.Framework.Assets
         private long accessSequence;
         private bool disposed;
 
+        [Inject]
         public ResourcesAssetProvider(IObjectResolver objectResolver = null)
             : this(new UnityResourcesAssetLoader(), objectResolver)
         {

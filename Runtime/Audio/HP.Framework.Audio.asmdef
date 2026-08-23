@@ -3,7 +3,9 @@
     "rootNamespace":  "HP.Framework.Audio",
     "references":  [
                        "HP.Framework.Core",
+                       "HP.Framework.Assets",
                        "HP.Framework.Persistence",
+                       "UniTask",
                        "VContainer"
                    ],
     "includePlatforms":  [

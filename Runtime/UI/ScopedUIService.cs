@@ -4,6 +4,9 @@ using UnityEngine;
 using VContainer;
 using VContainer.Unity;
 
+using System.Threading;
+using Cysharp.Threading.Tasks;
+
 namespace HP.Framework.UI
 {
     /// <summary>
@@ -172,6 +175,30 @@ namespace HP.Framework.UI
             return globalUi.OpenPopup<T>(configureBeforeShow);
         }
 
+        public UniTask<T> OpenPopupAsync<T>(CancellationToken cancellationToken = default)
+            where T : BasePopup
+        {
+            return OpenPopupAsync<T>(null, cancellationToken);
+        }
+
+        public async UniTask<T> OpenPopupAsync<T>(
+            Action<T> configureBeforeShow,
+            CancellationToken cancellationToken = default)
+            where T : BasePopup
+        {
+            ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryGetOrCreateLocalPopup(typeof(T), out BasePopup popup))
+            {
+                T typedPopup = popup as T;
+                configureBeforeShow?.Invoke(typedPopup);
+                typedPopup?.Show();
+                return typedPopup;
+            }
+
+            return await globalUi.OpenPopupAsync(configureBeforeShow, cancellationToken);
+        }
+
         public BasePopup OpenPopup(Type type)
         {
             ThrowIfDisposed();
@@ -284,6 +311,30 @@ namespace HP.Framework.UI
             }
 
             return globalUi.ShowScreen<T>(configureBeforeShow);
+        }
+
+        public UniTask<T> ShowScreenAsync<T>(CancellationToken cancellationToken = default)
+            where T : BaseScreen
+        {
+            return ShowScreenAsync<T>(null, cancellationToken);
+        }
+
+        public async UniTask<T> ShowScreenAsync<T>(
+            Action<T> configureBeforeShow,
+            CancellationToken cancellationToken = default)
+            where T : BaseScreen
+        {
+            ThrowIfDisposed();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryGetOrCreateLocalScreen(typeof(T), out BaseScreen screen))
+            {
+                T typedScreen = screen as T;
+                configureBeforeShow?.Invoke(typedScreen);
+                typedScreen?.Show();
+                return typedScreen;
+            }
+
+            return await globalUi.ShowScreenAsync(configureBeforeShow, cancellationToken);
         }
 
         public T GetOrCreateScreen<T>() where T : BaseScreen
@@ -539,5 +590,4 @@ namespace HP.Framework.UI
         }
     }
 }
-
 

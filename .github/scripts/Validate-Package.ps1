@@ -38,6 +38,18 @@ if ($package) {
     if ([string]$package.unity -notmatch '^6000\.') { Add-Warning "HP Framework is currently validated against Unity 6; package.json unity is '$($package.unity)'." }
     if ($package.dependencies.'com.unity.nuget.newtonsoft-json') { Add-Error "Newtonsoft is bundled under ThirdParty/NewtonsoftJson and must not be declared as an external package dependency." }
     if ($package.dependencies.'com.unity.addressables') { Add-Error "Addressables must remain an optional integration and must not be a hard dependency of the base HP Framework package." }
+    $samplePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($sample in @($package.samples)) {
+        $samplePath = [string]$sample.path
+        if ([string]::IsNullOrWhiteSpace($samplePath)) {
+            Add-Error "package.json sample '$($sample.displayName)' has no path."
+            continue
+        }
+        if (-not $samplePaths.Add($samplePath)) { Add-Error "Duplicate package sample path '$samplePath'." }
+        $sampleFolder = Join-Path $repoRoot $samplePath
+        if (-not (Test-Path $sampleFolder -PathType Container)) { Add-Error "Missing package sample folder '$samplePath'." }
+        elseif (-not (Test-Path (Join-Path $sampleFolder 'README.md') -PathType Leaf)) { Add-Error "Package sample '$samplePath' has no README.md." }
+    }
     $bundledNewtonsoft = Join-Path $repoRoot "ThirdParty\NewtonsoftJson\HP.Framework.NewtonsoftJson.dll"
     if (-not (Test-Path $bundledNewtonsoft -PathType Leaf)) {
         Add-Error "Missing bundled Newtonsoft assembly: ThirdParty/NewtonsoftJson/HP.Framework.NewtonsoftJson.dll"
@@ -138,7 +150,7 @@ foreach ($root in $unityRoots) {
 
 $requiredAssemblies = @(
     "HP.Framework.Core", "HP.Framework.Assets", "HP.Framework.Audio", "HP.Framework.Bootstrap",
-    "HP.Framework.Editor", "HP.Framework.Haptics", "HP.Framework.Input", "HP.Framework.Lifecycle", "HP.Framework.Persistence",
+    "HP.Framework.Editor", "HP.Framework.Haptics", "HP.Framework.Input", "HP.Framework.Lifecycle", "HP.Framework.Persistence", "HP.Framework.Performance", "HP.Framework.Startup",
     "HP.Framework.Pooling", "HP.Framework.UI", "HP.Framework.UI.TMP",
     "HP.Framework.Graphics", "HP.Framework.Diagnostics", "HP.Framework.Extensions", "HP.Framework.SafeArea",
     "HP.Framework.Tests.Editor", "HP.Framework.Tests.Runtime", "VContainer", "UniTask"
@@ -150,6 +162,33 @@ foreach ($name in $requiredAssemblies) {
 $core = $assemblyDefinitions | Where-Object { $_.Definition.name -eq 'HP.Framework.Core' } | Select-Object -First 1
 if ($core -and @($core.Definition.references).Count -ne 0) {
     Add-Error "HP.Framework.Core must not reference other assemblies."
+}
+
+$lifecycle = $assemblyDefinitions | Where-Object { $_.Definition.name -eq 'HP.Framework.Lifecycle' } | Select-Object -First 1
+if ($lifecycle) {
+    $lifecycleReferences = @($lifecycle.Definition.references | ForEach-Object { [string]$_ })
+    $unexpectedLifecycleReferences = @($lifecycleReferences | Where-Object { $_ -ne 'HP.Framework.Core' })
+    if ($unexpectedLifecycleReferences.Count -gt 0) {
+        Add-Error "HP.Framework.Lifecycle may only reference HP.Framework.Core; found: $($unexpectedLifecycleReferences -join ', ')."
+    }
+}
+
+$performance = $assemblyDefinitions | Where-Object { $_.Definition.name -eq 'HP.Framework.Performance' } | Select-Object -First 1
+if ($performance) {
+    $performanceReferences = @($performance.Definition.references | ForEach-Object { [string]$_ })
+    $unexpectedPerformanceReferences = @($performanceReferences | Where-Object { $_ -ne 'HP.Framework.Core' })
+    if ($unexpectedPerformanceReferences.Count -gt 0) {
+        Add-Error "HP.Framework.Performance may only reference HP.Framework.Core; found: $($unexpectedPerformanceReferences -join ', ')."
+    }
+}
+
+$startup = $assemblyDefinitions | Where-Object { $_.Definition.name -eq 'HP.Framework.Startup' } | Select-Object -First 1
+if ($startup) {
+    $startupReferences = @($startup.Definition.references | ForEach-Object { [string]$_ })
+    $unexpectedStartupReferences = @($startupReferences | Where-Object { $_ -ne 'HP.Framework.Core' -and $_ -ne 'UniTask' })
+    if ($unexpectedStartupReferences.Count -gt 0) {
+        Add-Error "HP.Framework.Startup may only reference HP.Framework.Core and UniTask; found: $($unexpectedStartupReferences -join ', ')."
+    }
 }
 
 $allowedExternalAssemblies = [System.Collections.Generic.HashSet[string]]::new([string[]]@(
@@ -228,11 +267,25 @@ foreach ($root in $sourceRoots) {
     Get-ChildItem $root -Recurse -Filter *.cs -File | ForEach-Object {
         $content = Get-Content $_.FullName -Raw
         $relativePath = Relative $_.FullName
+
+        if ($content -match 'Application\.targetFrameRate\s*=' -and $relativePath -ne 'Runtime/Performance/PerformanceService.cs') {
+            Add-Error "PerformanceService must be the only runtime owner of Application.targetFrameRate: $relativePath"
+        }
+        if ($content -match 'QualitySettings\.SetQualityLevel\s*\(' -and $relativePath -ne 'Runtime/Performance/PerformanceService.cs') {
+            Add-Error "PerformanceService must be the only runtime owner of QualitySettings.SetQualityLevel: $relativePath"
+        }
+
         foreach ($rule in $forbiddenPatterns) {
             if ($content -notmatch $rule.Pattern) { continue }
 
             $allowed = $rule.ContainsKey('AllowedPaths') -and $rule.AllowedPaths -contains $relativePath
             if (-not $allowed) { Add-Error "$($rule.Message): $relativePath" }
+        }
+
+        if ($content -match 'DontDestroyOnLoad\s*\(') {
+            if ($relativePath -ne 'Runtime/Bootstrap/RootLifetimeScope.cs') {
+                Add-Error "hidden global lifetime: $relativePath"
+            }
         }
     }
 }

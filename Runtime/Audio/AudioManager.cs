@@ -3,7 +3,10 @@
     using System;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Threading;
+    using Cysharp.Threading.Tasks;
     using HP.Framework;
+    using HP.Framework.Assets;
     using UnityEngine;
     using VContainer;
     using VContainer.Unity;
@@ -14,8 +17,18 @@
     /// Global music and SFX service. Uses Unity coroutines for fades so the core package has no
     /// DOTween dependency, and mirrors all mutable values through ISettingsService.
     /// </summary>
-    public sealed class AudioManager : MonoBehaviour, IAudioService, IInitializable, IDisposable
+    public sealed class AudioManager : MonoBehaviour, IAudioService, IAudioDiagnostics, IInitializable, IDisposable
     {
+        private sealed class SfxVoiceState
+        {
+            public bool Active;
+            public string Key;
+            public int Priority;
+            public long Sequence;
+            public float VolumeScale = 1f;
+            public IAssetLease<AudioClip> Lease;
+        }
+
         [Serializable]
         public struct AudioSettingsData
         {
@@ -43,28 +56,66 @@
         [SerializeField] private AudioLibrarySO audioLibrary;
 
         private readonly List<AudioSource> sfxChannels = new List<AudioSource>();
-        private readonly List<float> sfxChannelVolumeScales = new List<float>();
+        private readonly List<SfxVoiceState> sfxVoiceStates = new List<SfxVoiceState>();
         private readonly Dictionary<string, int> clusterSequentialIndices =
             new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly Dictionary<string, double> lastSfxPlayTimes =
+            new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<AudioVoiceCandidate> voiceCandidates = new List<AudioVoiceCandidate>();
 
         private ISettingsService settingsService;
+        private IAssetLeaseProvider assetLeaseProvider;
         private Coroutine musicFadeRoutine;
+        private IAssetLease<AudioClip> musicLease;
+        private IAssetLease<AudioClip> pendingMusicLeaseRelease;
         private float musicVolumeScale = 1f;
         private bool initialized;
+        private bool sfxPaused;
+        private long nextVoiceSequence;
+        private int playedSfxTotal;
+        private int droppedSfxTotal;
+        private int stolenSfxTotal;
 
         private AudioClip pausedMusicClip;
         private float pausedMusicTime;
         private float pausedMusicVolumeScale;
+        private IAssetLease<AudioClip> pausedMusicLease;
         private bool hasPausedMusic;
 
         public bool IsMusicPlaying => musicSource != null && musicSource.isPlaying;
         public bool IsMusicMuted => musicMuted;
         public bool IsSfxMuted => sfxMuted;
+        public AudioServiceStats Stats
+        {
+            get
+            {
+                EnsureInitialized();
+                ReleaseCompletedSfxVoices();
+                int activeCount = 0;
+                for (int i = 0; i < sfxVoiceStates.Count; i++)
+                {
+                    if (sfxVoiceStates[i].Active)
+                    {
+                        activeCount++;
+                    }
+                }
+
+                return new AudioServiceStats(
+                    activeCount,
+                    maxSfxChannelCount,
+                    playedSfxTotal,
+                    droppedSfxTotal,
+                    stolenSfxTotal);
+            }
+        }
 
         [Inject]
-        public void Construct(ISettingsService settingsService)
+        public void Construct(
+            ISettingsService settingsService,
+            IAssetLeaseProvider assetLeaseProvider)
         {
             this.settingsService = settingsService;
+            this.assetLeaseProvider = assetLeaseProvider;
         }
 
         public void Initialize()
@@ -104,33 +155,7 @@
             float volumeScale = 1f,
             float startTime = 0f)
         {
-            if (clip == null)
-            {
-                return;
-            }
-
-            EnsureInitialized();
-            StopMusicFade();
-            musicVolumeScale = Mathf.Max(0f, volumeScale);
-            float targetVolume = GetTargetMusicVolume();
-            float safeStartTime = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, clip.length - 0.01f));
-
-            if (fadeDuration > 0f && musicSource.isPlaying && musicSource.clip != clip)
-            {
-                musicFadeRoutine = StartCoroutine(CrossFadeMusic(
-                    clip,
-                    loop,
-                    safeStartTime,
-                    targetVolume,
-                    fadeDuration));
-                return;
-            }
-
-            musicSource.clip = clip;
-            musicSource.loop = loop;
-            musicSource.time = safeStartTime;
-            musicSource.volume = targetVolume;
-            musicSource.Play();
+            PlayMusicInternal(clip, loop, fadeDuration, volumeScale, startTime, null);
         }
 
         public void PlayMusic(
@@ -139,10 +164,64 @@
             float fadeDuration = 0.5f,
             float volumeScale = 1f)
         {
+            if (TryGetDirectEntry(key, out AudioLibrarySO.AudioEntry entry))
+            {
+                if (entry.assetMode == AudioAssetMode.DirectClip)
+                {
+                    PlayMusic(entry.clip, loop, fadeDuration, volumeScale);
+                }
+                else
+                {
+                    PlayMusicFromKeyAsync(key, loop, fadeDuration, volumeScale).Forget();
+                }
+
+                return;
+            }
+
             if (TryGetClip(key, out AudioClip clip))
             {
                 PlayMusic(clip, loop, fadeDuration, volumeScale);
             }
+        }
+
+        public async UniTask PlayMusicAsync(
+            string key,
+            bool loop = true,
+            float fadeDuration = 0.5f,
+            float volumeScale = 1f,
+            CancellationToken cancellationToken = default)
+        {
+            if (!TryGetDirectEntry(key, out AudioLibrarySO.AudioEntry entry))
+            {
+                if (TryGetClip(key, out AudioClip directClip))
+                {
+                    PlayMusic(directClip, loop, fadeDuration, volumeScale);
+                }
+
+                return;
+            }
+
+            if (entry.assetMode == AudioAssetMode.DirectClip)
+            {
+                PlayMusic(entry.clip, loop, fadeDuration, volumeScale);
+                return;
+            }
+
+            IAssetLease<AudioClip> lease = await AcquireAudioClipAsync(
+                entry.assetKey,
+                cancellationToken);
+            if (lease == null)
+            {
+                return;
+            }
+
+            PlayMusicInternal(
+                lease.Asset,
+                loop,
+                fadeDuration,
+                volumeScale,
+                0f,
+                lease);
         }
 
         public void OverrideMusic(
@@ -157,6 +236,9 @@
                 pausedMusicClip = musicSource.clip;
                 pausedMusicTime = musicSource.time;
                 pausedMusicVolumeScale = musicVolumeScale;
+                pausedMusicLease?.Dispose();
+                pausedMusicLease = musicLease;
+                musicLease = null;
                 hasPausedMusic = true;
             }
 
@@ -170,8 +252,15 @@
                 AudioClip restoreClip = pausedMusicClip;
                 float restoreTime = pausedMusicTime;
                 float restoreScale = pausedMusicVolumeScale;
-                ClearPausedMusic();
-                PlayMusic(restoreClip, true, fadeDuration, restoreScale, restoreTime);
+                IAssetLease<AudioClip> restoreLease = pausedMusicLease;
+                ClearPausedMusic(false);
+                PlayMusicInternal(
+                    restoreClip,
+                    true,
+                    fadeDuration,
+                    restoreScale,
+                    restoreTime,
+                    restoreLease);
                 return;
             }
 
@@ -206,19 +295,62 @@
             {
                 musicSource.Stop();
             }
+
+            ReleaseMusicLease();
         }
 
         public void PlaySfx(AudioClip clip, float volumeScale = 1f)
         {
-            PlaySfxInternal(clip, null, volumeScale);
+            string voiceKey = clip != null ? $"clip:{clip.GetInstanceID()}" : string.Empty;
+            PlaySfxInternal(
+                clip,
+                voiceKey,
+                null,
+                volumeScale,
+                AudioPlaybackPolicy.Default,
+                null);
         }
 
         public void PlaySfx(string key, float volumeScale = 1f)
         {
+            if (TryGetDirectEntry(key, out AudioLibrarySO.AudioEntry entry))
+            {
+                if (entry.assetMode == AudioAssetMode.DirectClip)
+                {
+                    PlaySfxInternal(
+                        entry.clip,
+                        key,
+                        null,
+                        volumeScale,
+                        entry.Policy,
+                        null);
+                }
+                else
+                {
+                    PlaySfxFromKeyAsync(key, volumeScale, null).Forget();
+                }
+
+                return;
+            }
+
             if (TryGetClip(key, out AudioClip clip))
             {
-                PlaySfx(clip, volumeScale);
+                PlaySfxInternal(
+                    clip,
+                    key,
+                    null,
+                    volumeScale,
+                    AudioPlaybackPolicy.Default,
+                    null);
             }
+        }
+
+        public async UniTask PlaySfxAsync(
+            string key,
+            float volumeScale = 1f,
+            CancellationToken cancellationToken = default)
+        {
+            await PlaySfxFromKeyAsync(key, volumeScale, null, cancellationToken);
         }
 
         public void PlayRandomSfxInCluster(string clusterId, float volumeScale = 1f)
@@ -230,7 +362,13 @@
         {
             if (TryGetSequentialClip(clusterId, out AudioClip clip))
             {
-                PlaySfx(clip, volumeScale);
+                PlaySfxInternal(
+                    clip,
+                    clusterId,
+                    null,
+                    volumeScale,
+                    AudioPlaybackPolicy.Default,
+                    null);
             }
         }
 
@@ -239,7 +377,14 @@
             Vector3 position,
             float volumeScale = 1f)
         {
-            PlaySfxInternal(clip, position, volumeScale);
+            string voiceKey = clip != null ? $"clip:{clip.GetInstanceID()}" : string.Empty;
+            PlaySfxInternal(
+                clip,
+                voiceKey,
+                position,
+                volumeScale,
+                AudioPlaybackPolicy.Default,
+                null);
         }
 
         public void PlaySfxAtPosition(
@@ -247,9 +392,35 @@
             Vector3 position,
             float volumeScale = 1f)
         {
+            if (TryGetDirectEntry(key, out AudioLibrarySO.AudioEntry entry))
+            {
+                if (entry.assetMode == AudioAssetMode.DirectClip)
+                {
+                    PlaySfxInternal(
+                        entry.clip,
+                        key,
+                        position,
+                        volumeScale,
+                        entry.Policy,
+                        null);
+                }
+                else
+                {
+                    PlaySfxFromKeyAsync(key, volumeScale, position).Forget();
+                }
+
+                return;
+            }
+
             if (TryGetClip(key, out AudioClip clip))
             {
-                PlaySfxAtPosition(clip, position, volumeScale);
+                PlaySfxInternal(
+                    clip,
+                    key,
+                    position,
+                    volumeScale,
+                    AudioPlaybackPolicy.Default,
+                    null);
             }
         }
 
@@ -268,12 +439,19 @@
         {
             if (TryGetSequentialClip(clusterId, out AudioClip clip))
             {
-                PlaySfxAtPosition(clip, position, volumeScale);
+                PlaySfxInternal(
+                    clip,
+                    clusterId,
+                    position,
+                    volumeScale,
+                    AudioPlaybackPolicy.Default,
+                    null);
             }
         }
 
         public void PauseSfx()
         {
+            sfxPaused = true;
             sfxSource?.Pause();
             for (int i = 0; i < sfxChannels.Count; i++)
             {
@@ -283,6 +461,7 @@
 
         public void ResumeSfx()
         {
+            sfxPaused = false;
             if (sfxSource != null && sfxSource.clip != null)
             {
                 sfxSource.UnPause();
@@ -304,13 +483,17 @@
             for (int i = 0; i < sfxChannels.Count; i++)
             {
                 sfxChannels[i]?.Stop();
+                ReleaseSfxVoice(i);
             }
+
+            sfxPaused = false;
         }
 
         public void StopAllAudio()
         {
             StopMusic();
             StopAllSfx();
+            ClearPausedMusic();
         }
 
         public void SetMusicMuted(bool muted)
@@ -396,8 +579,9 @@
                 settingsService.SettingChanged -= OnSettingChanged;
             }
 
-            StopMusicFade();
+            StopMusic();
             StopAllSfx();
+            ClearPausedMusic();
         }
 
         private void EnsureInitialized()
@@ -454,32 +638,53 @@
             source.loop = false;
             source.mute = sfxMuted;
             sfxChannels.Add(source);
-            sfxChannelVolumeScales.Add(1f);
+            sfxVoiceStates.Add(new SfxVoiceState());
             return source;
         }
 
-        private void PlaySfxInternal(
+        private bool PlaySfxInternal(
             AudioClip clip,
+            string key,
             Vector3? worldPosition,
-            float volumeScale)
+            float volumeScale,
+            AudioPlaybackPolicy policy,
+            IAssetLease<AudioClip> lease)
         {
             if (clip == null || sfxMuted)
             {
-                return;
+                return false;
             }
 
             EnsureInitialized();
-            AudioSource channel = GetFreeChannel(out int channelIndex);
+            ReleaseCompletedSfxVoices();
+            string voiceKey = string.IsNullOrWhiteSpace(key)
+                ? $"clip:{clip.GetInstanceID()}"
+                : key;
+
+            if (!CanPlaySfxKey(voiceKey, policy))
+            {
+                droppedSfxTotal++;
+                return false;
+            }
+
+            AudioSource channel = GetAvailableChannel(policy.Priority, out int channelIndex);
             if (channel == null)
             {
-                sfxSource.PlayOneShot(clip, Mathf.Clamp01(sfxVolume * volumeScale));
-                return;
+                droppedSfxTotal++;
+                return false;
+            }
+
+            SfxVoiceState state = sfxVoiceStates[channelIndex];
+            if (state.Active)
+            {
+                channel.Stop();
+                ReleaseSfxVoice(channelIndex);
+                stolenSfxTotal++;
             }
 
             float safeScale = Mathf.Max(0f, volumeScale);
-            sfxChannelVolumeScales[channelIndex] = safeScale;
             channel.transform.localPosition = Vector3.zero;
-            channel.spatialBlend = worldPosition.HasValue ? 1f : 0f;
+            channel.spatialBlend = worldPosition.HasValue ? 1f : policy.SpatialBlend;
             if (worldPosition.HasValue)
             {
                 channel.transform.position = worldPosition.Value;
@@ -487,18 +692,30 @@
 
             channel.clip = clip;
             channel.volume = Mathf.Clamp01(sfxVolume * safeScale);
+            state.Active = true;
+            state.Key = voiceKey;
+            state.Priority = policy.Priority;
+            state.Sequence = nextVoiceSequence++;
+            state.VolumeScale = safeScale;
+            state.Lease = lease;
             channel.Play();
+            if (lease != null)
+            {
+                StartCoroutine(ReleaseAssetBackedSfxWhenComplete(channelIndex, state.Sequence));
+            }
+            lastSfxPlayTimes[voiceKey] = Time.unscaledTimeAsDouble;
+            playedSfxTotal++;
+            return true;
         }
 
-        private AudioSource GetFreeChannel(out int index)
+        private AudioSource GetAvailableChannel(int requestPriority, out int index)
         {
             for (int i = 0; i < sfxChannels.Count; i++)
             {
-                AudioSource channel = sfxChannels[i];
-                if (channel != null && !channel.isPlaying)
+                if (!sfxVoiceStates[i].Active && sfxChannels[i] != null)
                 {
                     index = i;
-                    return channel;
+                    return sfxChannels[i];
                 }
             }
 
@@ -508,8 +725,248 @@
                 return CreateSfxChannel($"SfxChannel_Dynamic_{index}");
             }
 
-            index = -1;
+            voiceCandidates.Clear();
+            for (int i = 0; i < sfxVoiceStates.Count; i++)
+            {
+                SfxVoiceState state = sfxVoiceStates[i];
+                voiceCandidates.Add(new AudioVoiceCandidate(
+                    state.Active,
+                    state.Priority,
+                    state.Sequence));
+            }
+
+            index = AudioVoiceSelector.SelectStealCandidate(
+                voiceCandidates,
+                requestPriority);
+            return index >= 0 ? sfxChannels[index] : null;
+        }
+
+        private bool CanPlaySfxKey(string key, AudioPlaybackPolicy policy)
+        {
+            if (policy.MinRetriggerInterval > 0f
+                && lastSfxPlayTimes.TryGetValue(key, out double lastPlayTime)
+                && Time.unscaledTimeAsDouble - lastPlayTime < policy.MinRetriggerInterval)
+            {
+                return false;
+            }
+
+            if (policy.MaxSimultaneous <= 0)
+            {
+                return true;
+            }
+
+            int activeForKey = 0;
+            for (int i = 0; i < sfxVoiceStates.Count; i++)
+            {
+                SfxVoiceState state = sfxVoiceStates[i];
+                if (state.Active && string.Equals(state.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    activeForKey++;
+                }
+            }
+
+            return activeForKey < policy.MaxSimultaneous;
+        }
+
+        private void ReleaseCompletedSfxVoices()
+        {
+            if (sfxPaused)
+            {
+                return;
+            }
+
+            for (int i = 0; i < sfxChannels.Count; i++)
+            {
+                AudioSource channel = sfxChannels[i];
+                if (sfxVoiceStates[i].Active && (channel == null || !channel.isPlaying))
+                {
+                    ReleaseSfxVoice(i);
+                }
+            }
+        }
+
+        private IEnumerator ReleaseAssetBackedSfxWhenComplete(int index, long sequence)
+        {
+            while (index >= 0 && index < sfxVoiceStates.Count)
+            {
+                SfxVoiceState state = sfxVoiceStates[index];
+                if (!state.Active || state.Sequence != sequence)
+                {
+                    yield break;
+                }
+
+                AudioSource channel = index < sfxChannels.Count ? sfxChannels[index] : null;
+                if (!sfxPaused && (channel == null || !channel.isPlaying))
+                {
+                    ReleaseSfxVoice(index);
+                    yield break;
+                }
+
+                yield return null;
+            }
+        }
+
+        private void ReleaseSfxVoice(int index)
+        {
+            if (index < 0 || index >= sfxVoiceStates.Count)
+            {
+                return;
+            }
+
+            SfxVoiceState state = sfxVoiceStates[index];
+            state.Lease?.Dispose();
+            state.Lease = null;
+            state.Active = false;
+            state.Key = null;
+            state.Priority = 0;
+            state.Sequence = 0;
+            state.VolumeScale = 1f;
+        }
+
+        private async UniTask PlaySfxFromKeyAsync(
+            string key,
+            float volumeScale,
+            Vector3? worldPosition,
+            CancellationToken cancellationToken = default)
+        {
+            if (!TryGetDirectEntry(key, out AudioLibrarySO.AudioEntry entry))
+            {
+                if (TryGetClip(key, out AudioClip clusterClip))
+                {
+                    PlaySfxInternal(
+                        clusterClip,
+                        key,
+                        worldPosition,
+                        volumeScale,
+                        AudioPlaybackPolicy.Default,
+                        null);
+                }
+
+                return;
+            }
+
+            if (entry.assetMode == AudioAssetMode.DirectClip)
+            {
+                PlaySfxInternal(
+                    entry.clip,
+                    key,
+                    worldPosition,
+                    volumeScale,
+                    entry.Policy,
+                    null);
+                return;
+            }
+
+            IAssetLease<AudioClip> lease = await AcquireAudioClipAsync(
+                entry.assetKey,
+                cancellationToken);
+            if (lease == null)
+            {
+                return;
+            }
+
+            if (!PlaySfxInternal(
+                    lease.Asset,
+                    key,
+                    worldPosition,
+                    volumeScale,
+                    entry.Policy,
+                    lease))
+            {
+                lease.Dispose();
+            }
+        }
+
+        private async UniTask PlayMusicFromKeyAsync(
+            string key,
+            bool loop,
+            float fadeDuration,
+            float volumeScale)
+        {
+            try
+            {
+                await PlayMusicAsync(key, loop, fadeDuration, volumeScale);
+            }
+            catch (OperationCanceledException)
+            {
+                // The caller intentionally abandoned the load.
+            }
+            catch (Exception exception)
+            {
+                BaseLog.LogException(exception);
+            }
+        }
+
+        private async UniTask<IAssetLease<AudioClip>> AcquireAudioClipAsync(
+            string assetKey,
+            CancellationToken cancellationToken)
+        {
+            if (assetLeaseProvider == null)
+            {
+                BaseLog.LogWarning(
+                    $"Audio asset '{assetKey}' requires IAssetLeaseProvider, but none is configured.");
+                return null;
+            }
+
+            IAssetLease<AudioClip> lease = await assetLeaseProvider.AcquireAsync<AudioClip>(
+                assetKey,
+                cancellationToken);
+            if (lease != null && lease.IsValid && lease.Asset != null)
+            {
+                return lease;
+            }
+
+            lease?.Dispose();
+            BaseLog.LogWarning($"Audio asset '{assetKey}' could not be loaded.");
             return null;
+        }
+
+        private void PlayMusicInternal(
+            AudioClip clip,
+            bool loop,
+            float fadeDuration,
+            float volumeScale,
+            float startTime,
+            IAssetLease<AudioClip> lease)
+        {
+            if (clip == null)
+            {
+                lease?.Dispose();
+                return;
+            }
+
+            EnsureInitialized();
+            StopMusicFade();
+            musicVolumeScale = Mathf.Max(0f, volumeScale);
+            float targetVolume = GetTargetMusicVolume();
+            float safeStartTime = Mathf.Clamp(startTime, 0f, Mathf.Max(0f, clip.length - 0.01f));
+            IAssetLease<AudioClip> previousLease = musicLease;
+            musicLease = lease;
+
+            if (fadeDuration > 0f && musicSource.isPlaying && musicSource.clip != clip)
+            {
+                pendingMusicLeaseRelease = previousLease;
+                musicFadeRoutine = StartCoroutine(CrossFadeMusic(
+                    clip,
+                    loop,
+                    safeStartTime,
+                    targetVolume,
+                    fadeDuration));
+                return;
+            }
+
+            previousLease?.Dispose();
+            musicSource.clip = clip;
+            musicSource.loop = loop;
+            musicSource.time = safeStartTime;
+            musicSource.volume = targetVolume;
+            musicSource.Play();
+        }
+
+        private bool TryGetDirectEntry(string key, out AudioLibrarySO.AudioEntry entry)
+        {
+            entry = default;
+            return audioLibrary != null && audioLibrary.TryGetEntry(key, out entry);
         }
 
         private bool TryGetClip(string key, out AudioClip clip)
@@ -590,7 +1047,7 @@
                 channel.mute = sfxMuted;
                 channel.volume = sfxMuted
                     ? 0f
-                    : Mathf.Clamp01(sfxVolume * sfxChannelVolumeScales[i]);
+                    : Mathf.Clamp01(sfxVolume * sfxVoiceStates[i].VolumeScale);
             }
         }
 
@@ -610,6 +1067,7 @@
             yield return FadeVolume(musicSource, musicSource.volume, 0f, halfDuration);
 
             musicSource.Stop();
+            ReleasePendingMusicLease();
             musicSource.clip = nextClip;
             musicSource.loop = loop;
             musicSource.time = startTime;
@@ -624,6 +1082,7 @@
         {
             yield return FadeVolume(musicSource, musicSource.volume, 0f, duration);
             musicSource.Stop();
+            ReleaseMusicLease();
             musicFadeRoutine = null;
         }
 
@@ -664,10 +1123,30 @@
 
             StopCoroutine(musicFadeRoutine);
             musicFadeRoutine = null;
+            ReleasePendingMusicLease();
         }
 
-        private void ClearPausedMusic()
+        private void ReleaseMusicLease()
         {
+            musicLease?.Dispose();
+            musicLease = null;
+            ReleasePendingMusicLease();
+        }
+
+        private void ReleasePendingMusicLease()
+        {
+            pendingMusicLeaseRelease?.Dispose();
+            pendingMusicLeaseRelease = null;
+        }
+
+        private void ClearPausedMusic(bool releaseLease = true)
+        {
+            if (releaseLease)
+            {
+                pausedMusicLease?.Dispose();
+            }
+
+            pausedMusicLease = null;
             hasPausedMusic = false;
             pausedMusicClip = null;
             pausedMusicTime = 0f;
@@ -677,5 +1156,3 @@
 
 
 }
-
-

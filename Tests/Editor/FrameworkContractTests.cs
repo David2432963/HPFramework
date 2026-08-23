@@ -606,6 +606,33 @@ namespace HP.Framework.Tests
         }
     }
 
+    public sealed class BuildSettingsSetupTests
+    {
+        [Test]
+        public void AutoSetupBuildSettings_RemovesMissingSceneEntries()
+        {
+            const string MissingScenePath = "Assets/__HPFrameworkMissingBuildScene.unity";
+            EditorBuildSettingsScene[] originalScenes = EditorBuildSettings.scenes;
+            try
+            {
+                EditorBuildSettings.scenes = new[]
+                {
+                    new EditorBuildSettingsScene(MissingScenePath, true)
+                };
+
+                HP.Framework.Editor.RootLifetimeScopeEditor.AutoSetupBuildSettings();
+
+                Assert.That(
+                    Array.Exists(EditorBuildSettings.scenes, scene => scene.path == MissingScenePath),
+                    Is.False);
+            }
+            finally
+            {
+                EditorBuildSettings.scenes = originalScenes;
+            }
+        }
+    }
+
     public sealed class BootstrapPrefabTests
     {
         private const string BootstrapTemplateGuid = "550d92965c5c4c53b9949039d465faba";

@@ -1,0 +1,17 @@
+{
+  "name": "HP.Framework.Startup",
+  "rootNamespace": "HP.Framework.Startup",
+  "references": [
+    "HP.Framework.Core",
+    "UniTask"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

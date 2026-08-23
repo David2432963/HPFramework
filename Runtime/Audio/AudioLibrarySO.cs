@@ -12,6 +12,20 @@
         {
             public string key;
             public AudioClip clip;
+            public AudioAssetMode assetMode;
+            public string assetKey;
+            public int priority;
+            [Min(0)] public int maxSimultaneous;
+            [Min(0f)] public float minRetriggerInterval;
+            [Range(0f, 1f)] public float spatialBlend;
+            public AudioCategory category;
+
+            public AudioPlaybackPolicy Policy => new AudioPlaybackPolicy(
+                priority,
+                maxSimultaneous,
+                minRetriggerInterval,
+                spatialBlend,
+                category);
         }
 
         [System.Serializable]
@@ -28,6 +42,7 @@
         [SerializeField] private List<AudioClusterEntry> audioClusters = new List<AudioClusterEntry>();
 
         private Dictionary<string, AudioClip> directClipLookup;
+        private Dictionary<string, AudioEntry> entryLookup;
         private Dictionary<string, List<AudioClip>> clusterLookup;
 
         public bool ContainsKey(string key)
@@ -38,7 +53,7 @@
                 return false;
             }
 
-            return directClipLookup.ContainsKey(key) || clusterLookup.ContainsKey(key);
+            return entryLookup.ContainsKey(key) || clusterLookup.ContainsKey(key);
         }
 
         public bool TryValidate(out string errorMessage)
@@ -57,9 +72,14 @@
                     continue;
                 }
 
-                if (entry.clip == null)
+                if (entry.assetMode == AudioAssetMode.DirectClip && entry.clip == null)
                 {
                     errors.Add($"Single entry '{key}' has no clip assigned.");
+                }
+                else if (entry.assetMode == AudioAssetMode.AssetKey
+                         && string.IsNullOrWhiteSpace(entry.assetKey))
+                {
+                    errors.Add($"Single entry '{key}' uses AssetKey mode but has no asset key.");
                 }
 
                 if (!directKeys.Add(key))
@@ -119,10 +139,17 @@
         public void InitializeLookup()
         {
             directClipLookup = new Dictionary<string, AudioClip>(StringComparer.OrdinalIgnoreCase);
+            entryLookup = new Dictionary<string, AudioEntry>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < audioEntries.Count; i++)
             {
                 AudioEntry entry = audioEntries[i];
-                if (!string.IsNullOrWhiteSpace(entry.key) && entry.clip != null)
+                if (string.IsNullOrWhiteSpace(entry.key))
+                {
+                    continue;
+                }
+
+                entryLookup[entry.key] = entry;
+                if (entry.assetMode == AudioAssetMode.DirectClip && entry.clip != null)
                 {
                     directClipLookup[entry.key] = entry.clip;
                 }
@@ -177,6 +204,18 @@
             return false;
         }
 
+        public bool TryGetEntry(string key, out AudioEntry entry)
+        {
+            EnsureLookupInitialized();
+            if (!string.IsNullOrWhiteSpace(key) && entryLookup.TryGetValue(key, out entry))
+            {
+                return true;
+            }
+
+            entry = default;
+            return false;
+        }
+
         public bool TryGetSequentialClip(string key, ref int currentIndex, out AudioClip clip)
         {
             EnsureLookupInitialized();
@@ -210,7 +249,7 @@
 
         private void EnsureLookupInitialized()
         {
-            if (directClipLookup == null || clusterLookup == null)
+            if (directClipLookup == null || entryLookup == null || clusterLookup == null)
             {
                 InitializeLookup();
             }
@@ -219,5 +258,4 @@
 
 
 }
-
 

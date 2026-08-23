@@ -3,6 +3,7 @@
     "rootNamespace":  "HP.Framework.Pooling",
     "references":  [
                        "HP.Framework.Core",
+                       "UniTask",
                        "VContainer"
                    ],
     "includePlatforms":  [

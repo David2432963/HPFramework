@@ -1,6 +1,9 @@
 ﻿using System;
 using UnityEngine;
 
+using System.Threading;
+using Cysharp.Threading.Tasks;
+
 namespace HP.Framework.UI
 {
     /// <summary>
@@ -22,6 +25,8 @@ namespace HP.Framework.UI
 
         T OpenPopup<T>() where T : BasePopup;
         T OpenPopup<T>(Action<T> configureBeforeShow) where T : BasePopup;
+        UniTask<T> OpenPopupAsync<T>(CancellationToken cancellationToken = default) where T : BasePopup;
+        UniTask<T> OpenPopupAsync<T>(Action<T> configureBeforeShow, CancellationToken cancellationToken = default) where T : BasePopup;
         BasePopup OpenPopup(Type type);
         T GetOrCreatePopup<T>() where T : BasePopup;
         void ClosePopup<T>() where T : BasePopup;
@@ -32,6 +37,8 @@ namespace HP.Framework.UI
 
         T ShowScreen<T>() where T : BaseScreen;
         T ShowScreen<T>(Action<T> configureBeforeShow) where T : BaseScreen;
+        UniTask<T> ShowScreenAsync<T>(CancellationToken cancellationToken = default) where T : BaseScreen;
+        UniTask<T> ShowScreenAsync<T>(Action<T> configureBeforeShow, CancellationToken cancellationToken = default) where T : BaseScreen;
         T GetOrCreateScreen<T>() where T : BaseScreen;
         bool TryShowScreenByType(Type screenType);
         void HideScreen<T>() where T : BaseScreen;
@@ -59,7 +66,7 @@ namespace HP.Framework.UI
         Transform PopupRoot { get; }
         Transform NotificationRoot { get; }
 
-        void AttachUICameraTo(Camera mainCamera);
+        void AttachUICameraTo(Camera baseCamera);
     }
 
     /// <summary>
