@@ -3,18 +3,15 @@ using UnityEngine;
 
 namespace HP.Framework.UI.TMP
 {
+    /// <summary>
+    /// Applies TMP outline, shadow, and glow through a material owned by this text only.
+    /// </summary>
     [ExecuteAlways]
     [DisallowMultipleComponent]
     [RequireComponent(typeof(TMP_Text))]
-    [AddComponentMenu("UI/TextMeshPro/Per Text Style Override")]
+    [AddComponentMenu("UI/TextMeshPro/TMP Text Effects")]
     public sealed class TMPTextStyleOverride : MonoBehaviour
     {
-        public enum MaterialMode
-        {
-            UniqueInstance,
-            SharedMaterialPreset
-        }
-
         private static readonly int OutlineColorId = Shader.PropertyToID("_OutlineColor");
         private static readonly int OutlineWidthId = Shader.PropertyToID("_OutlineWidth");
         private static readonly int UnderlayColorId = Shader.PropertyToID("_UnderlayColor");
@@ -31,19 +28,14 @@ namespace HP.Framework.UI.TMP
         private const string UnderlayKeyword = "UNDERLAY_ON";
         private const string GlowKeyword = "GLOW_ON";
 
-        [SerializeField] private MaterialMode _materialMode = MaterialMode.UniqueInstance;
         [SerializeField] private bool _overrideEnabled = true;
-        [SerializeField, HideInInspector] private Material _baseSharedMaterial;
-        [SerializeField] private Material _sharedMaterialPreset;
-
-        [Header("Face")]
-        [SerializeField, ColorUsage(true, true)] private Color _faceColor = Color.white;
 
         [Header("Outline")]
+        [SerializeField] private bool _outlineEnabled;
         [SerializeField, Range(0f, 1f)] private float _outlineWidth;
         [SerializeField, ColorUsage(true, true)] private Color _outlineColor = Color.black;
 
-        [Header("Underlay Shadow")]
+        [Header("Shadow")]
         [SerializeField] private bool _underlayEnabled;
         [SerializeField, ColorUsage(true, true)] private Color _underlayColor = Color.black;
         [SerializeField, Range(-1f, 1f)] private float _underlayOffsetX = 0.5f;
@@ -59,14 +51,19 @@ namespace HP.Framework.UI.TMP
         [SerializeField, Range(-1f, 1f)] private float _glowOuter;
         [SerializeField, Range(0f, 1f)] private float _glowPower = 1f;
 
-        [System.NonSerialized] private TMP_Text _text;
-        [System.NonSerialized] private bool _hasApplied;
-        [System.NonSerialized] private MaterialMode _appliedMode;
+        // Version 0 assets predate the explicit outline toggle. Their width remains authoritative.
+        [SerializeField, HideInInspector] private int _serializedVersion;
 
-        public MaterialMode Mode => _materialMode;
-        public Material SharedMaterialPreset => _sharedMaterialPreset;
+        [System.NonSerialized] private TMP_Text _text;
+        [System.NonSerialized] private Material _sourceMaterial;
+        [System.NonSerialized] private Material _ownedMaterial;
+        [System.NonSerialized] private Material _ownedSourceMaterial;
+
         public TMP_Text Text => _text != null ? _text : GetComponent<TMP_Text>();
-        public Material CurrentMaterial => Text != null ? Text.fontMaterial : null;
+        public Material CurrentMaterial => _ownedMaterial != null ? _ownedMaterial : Text != null ? Text.fontSharedMaterial : null;
+
+        private bool IsOutlineEnabled => _serializedVersion == 0 ? _outlineWidth > 0f : _outlineEnabled;
+        private bool HasActiveEffects => _overrideEnabled && (IsOutlineEnabled || _underlayEnabled || _glowEnabled);
 
         private void OnEnable()
         {
@@ -77,8 +74,19 @@ namespace HP.Framework.UI.TMP
         private void OnValidate()
         {
             CacheText();
-            _hasApplied = false;
             ApplyStyle();
+        }
+
+        private void OnDisable()
+        {
+            RestoreSourceMaterial();
+            ReleaseOwnedMaterial();
+        }
+
+        private void OnDestroy()
+        {
+            RestoreSourceMaterial();
+            ReleaseOwnedMaterial();
         }
 
         public void ApplyStyle()
@@ -89,83 +97,65 @@ namespace HP.Framework.UI.TMP
                 return;
             }
 
-            if (_baseSharedMaterial == null)
-            {
-                _baseSharedMaterial = _text.fontSharedMaterial;
-            }
-
-            if (!_overrideEnabled)
-            {
-                RestoreSharedMaterial();
-                return;
-            }
-
-            if (_materialMode == MaterialMode.SharedMaterialPreset)
-            {
-                if (_sharedMaterialPreset == null)
-                {
-                    return;
-                }
-
-                if (_text.fontSharedMaterial != _sharedMaterialPreset)
-                {
-                    _text.fontSharedMaterial = _sharedMaterialPreset;
-                }
-
-                _text.SetMaterialDirty();
-                _hasApplied = true;
-                _appliedMode = _materialMode;
-                return;
-            }
-
-            if (!_hasApplied || _appliedMode != _materialMode)
-            {
-                RestoreSharedMaterial();
-            }
-
-            Material material = _text.fontMaterial;
-            if (material == null)
+            Material source = ResolveSourceMaterial();
+            if (source == null)
             {
                 return;
             }
 
-            _text.color = _faceColor;
-            SetColorIfSupported(material, OutlineColorId, _outlineColor);
-            SetFloatIfSupported(material, OutlineWidthId, _outlineWidth);
+            if (!HasActiveEffects)
+            {
+                RestoreSourceMaterial();
+                ReleaseOwnedMaterial();
+                return;
+            }
 
-            ApplyUnderlay(material);
-            ApplyGlow(material);
+            EnsureOwnedMaterial(source);
+            if (_ownedMaterial == null)
+            {
+                return;
+            }
+
+            _ownedMaterial.CopyPropertiesFromMaterial(source);
+            _ownedMaterial.shaderKeywords = source.shaderKeywords;
+            ApplyEffects(_ownedMaterial);
+
+            if (_text.fontSharedMaterial != _ownedMaterial)
+            {
+                _text.fontMaterial = _ownedMaterial;
+            }
 
             _text.UpdateMeshPadding();
             _text.SetVerticesDirty();
             _text.SetMaterialDirty();
-            _hasApplied = true;
-            _appliedMode = _materialMode;
         }
 
-        public void RestoreBaseMaterial()
+        public void SetOutline(Color color, float width, bool enabled = true)
         {
-            _overrideEnabled = false;
-            RestoreSharedMaterial();
+            _serializedVersion = 1;
+            _outlineEnabled = enabled;
+            _outlineColor = color;
+            _outlineWidth = Mathf.Clamp01(width);
+            ApplyStyle();
         }
 
-        public void RebaseFromCurrentMaterial()
+        public void SetGlow(Color color, float power = 0.5f, bool enabled = true)
         {
-            CacheText();
-            if (_text == null)
-            {
-                return;
-            }
-
-            _baseSharedMaterial = _text.fontSharedMaterial;
-            _hasApplied = false;
+            _glowEnabled = enabled;
+            _glowColor = color;
+            _glowPower = Mathf.Clamp01(power);
             ApplyStyle();
         }
 
         public void EnableOverride()
         {
             _overrideEnabled = true;
-            _hasApplied = false;
+            ApplyStyle();
+        }
+
+        public void RestoreBaseMaterial()
+        {
+            _overrideEnabled = false;
             ApplyStyle();
         }
 
@@ -177,34 +167,100 @@ namespace HP.Framework.UI.TMP
             }
         }
 
-        private void RestoreSharedMaterial()
+        private Material ResolveSourceMaterial()
         {
-            if (_text == null || _baseSharedMaterial == null)
+            Material current = _text.fontSharedMaterial;
+            if (current != _ownedMaterial && IsCompatibleWithCurrentFont(current))
+            {
+                _sourceMaterial = current;
+            }
+
+            if (!IsCompatibleWithCurrentFont(_sourceMaterial))
+            {
+                _sourceMaterial = _text.font != null ? _text.font.material : current;
+            }
+
+            return _sourceMaterial;
+        }
+
+        private bool IsCompatibleWithCurrentFont(Material material)
+        {
+            if (material == null || _text == null || _text.font == null)
+            {
+                return material != null;
+            }
+
+            Texture materialAtlas = material.GetTexture(ShaderUtilities.ID_MainTex);
+            Texture fontAtlas = _text.font.atlasTexture;
+            return materialAtlas == null || fontAtlas == null || materialAtlas == fontAtlas;
+        }
+
+        private void EnsureOwnedMaterial(Material source)
+        {
+            if (_ownedMaterial != null && _ownedSourceMaterial == source)
             {
                 return;
             }
 
-            if (_text.fontSharedMaterial != _baseSharedMaterial)
+            RestoreSourceMaterial();
+            ReleaseOwnedMaterial();
+            _sourceMaterial = source;
+            _ownedSourceMaterial = source;
+            _ownedMaterial = new Material(source)
             {
-                _text.fontSharedMaterial = _baseSharedMaterial;
-            }
-
-            _text.SetMaterialDirty();
-            _hasApplied = false;
+                name = source.name + " (TMP Text Effects)",
+                hideFlags = HideFlags.HideAndDontSave
+            };
         }
 
-        private void ApplyUnderlay(Material material)
+        private void RestoreSourceMaterial()
         {
+            if (_text == null || _ownedMaterial == null || _text.fontSharedMaterial != _ownedMaterial)
+            {
+                return;
+            }
+
+            Material source = ResolveSourceMaterial();
+            if (source != null && source != _ownedMaterial)
+            {
+                _text.fontSharedMaterial = source;
+                _text.UpdateMeshPadding();
+                _text.SetMaterialDirty();
+            }
+        }
+
+        private void ReleaseOwnedMaterial()
+        {
+            if (_ownedMaterial == null)
+            {
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                Destroy(_ownedMaterial);
+            }
+            else
+            {
+                DestroyImmediate(_ownedMaterial);
+            }
+
+            _ownedMaterial = null;
+            _ownedSourceMaterial = null;
+        }
+
+        private void ApplyEffects(Material material)
+        {
+            SetColorIfSupported(material, OutlineColorId, _outlineColor);
+            SetFloatIfSupported(material, OutlineWidthId, IsOutlineEnabled ? _outlineWidth : 0f);
+
             SetKeyword(material, UnderlayKeyword, _underlayEnabled);
             SetColorIfSupported(material, UnderlayColorId, _underlayColor);
             SetFloatIfSupported(material, UnderlayOffsetXId, _underlayOffsetX);
             SetFloatIfSupported(material, UnderlayOffsetYId, _underlayOffsetY);
             SetFloatIfSupported(material, UnderlayDilateId, _underlayDilate);
             SetFloatIfSupported(material, UnderlaySoftnessId, _underlaySoftness);
-        }
 
-        private void ApplyGlow(Material material)
-        {
             SetKeyword(material, GlowKeyword, _glowEnabled);
             SetColorIfSupported(material, GlowColorId, _glowColor);
             SetFloatIfSupported(material, GlowOffsetId, _glowOffset);
@@ -242,3 +298,4 @@ namespace HP.Framework.UI.TMP
         }
     }
 }
+

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using TMPro;
@@ -86,13 +86,12 @@ namespace HP.Framework.UI.TMP
         public static void SetOutline(this TMP_Text text, Color outlineColor, float outlineWidth)
         {
             if (text == null) return;
-            if (!text.TryGetComponent(out TMPMaterialInstance materialInstance))
+            if (!text.TryGetComponent(out TMPTextStyleOverride effects))
             {
-                materialInstance = text.gameObject.AddComponent<TMPMaterialInstance>();
+                effects = text.gameObject.AddComponent<TMPTextStyleOverride>();
             }
 
-            materialInstance.SetOutlineColor(outlineColor);
-            materialInstance.SetOutlineWidth(outlineWidth);
+            effects.SetOutline(outlineColor, outlineWidth);
         }
 
         public static string FormatAbbreviated(this long number)

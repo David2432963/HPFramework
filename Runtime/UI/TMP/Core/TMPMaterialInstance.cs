@@ -1,99 +1,55 @@
-﻿using TMPro;
+using TMPro;
 using UnityEngine;
 
 namespace HP.Framework.UI.TMP
 {
     /// <summary>
-    /// Owns a dedicated TMP material instance and restores the shared material on teardown.
+    /// Backward-compatible bridge for the retired material helper.
+    /// New code should use <see cref="TMPTextStyleOverride"/> directly.
     /// </summary>
     [DisallowMultipleComponent]
     [RequireComponent(typeof(TMP_Text))]
     public sealed class TMPMaterialInstance : MonoBehaviour
     {
-        private TMP_Text textComponent;
-        private Material originalSharedMaterial;
-        private Material customMaterialInstance;
+        private TMPTextStyleOverride _effects;
+        private Color _outlineColor = Color.black;
+        private float _outlineWidth;
 
-        private void Awake()
-        {
-            textComponent = GetComponent<TMP_Text>();
-            originalSharedMaterial = textComponent.fontSharedMaterial;
-        }
-
-        public Material MaterialInstance
-        {
-            get
-            {
-                if (customMaterialInstance == null && textComponent != null)
-                {
-                    Material source = originalSharedMaterial != null
-                        ? originalSharedMaterial
-                        : textComponent.fontSharedMaterial;
-                    if (source == null)
-                    {
-                        return null;
-                    }
-
-                    customMaterialInstance = new Material(source)
-                    {
-                        name = source.name + " (TMP Instance)"
-                    };
-                    textComponent.fontMaterial = customMaterialInstance;
-                }
-
-                return customMaterialInstance;
-            }
-        }
+        public Material MaterialInstance => Effects.CurrentMaterial;
 
         public void SetOutlineColor(Color color)
         {
-            MaterialInstance?.SetColor(ShaderUtilities.ID_OutlineColor, color);
+            _outlineColor = color;
+            Effects.SetOutline(_outlineColor, _outlineWidth);
         }
 
         public void SetOutlineWidth(float width)
         {
-            MaterialInstance?.SetFloat(
-                ShaderUtilities.ID_OutlineWidth,
-                Mathf.Max(0f, width));
+            _outlineWidth = width;
+            Effects.SetOutline(_outlineColor, _outlineWidth);
         }
 
         public void SetGlow(Color color, float power = 0.5f)
         {
-            Material material = MaterialInstance;
-            if (material == null)
-            {
-                return;
-            }
-
-            material.EnableKeyword(ShaderUtilities.Keyword_Glow);
-            material.SetColor(ShaderUtilities.ID_GlowColor, color);
-            material.SetFloat(ShaderUtilities.ID_GlowPower, Mathf.Max(0f, power));
+            Effects.SetGlow(color, power);
         }
 
-        private void OnDestroy()
+        private TMPTextStyleOverride Effects
         {
-            if (textComponent != null && originalSharedMaterial != null)
+            get
             {
-                textComponent.fontSharedMaterial = originalSharedMaterial;
-            }
+                if (_effects == null)
+                {
+                    _effects = GetComponent<TMPTextStyleOverride>();
+                    if (_effects == null)
+                    {
+                        _effects = gameObject.AddComponent<TMPTextStyleOverride>();
+                    }
+                }
 
-            if (customMaterialInstance == null)
-            {
-                return;
+                return _effects;
             }
-
-            if (Application.isPlaying)
-            {
-                Destroy(customMaterialInstance);
-            }
-            else
-            {
-                DestroyImmediate(customMaterialInstance);
-            }
-
-            customMaterialInstance = null;
         }
     }
 }
-
 
