@@ -1,4 +1,4 @@
-﻿namespace HP.Framework.Audio
+namespace HP.Framework.Audio
 {
     using System;
     using System.Collections.Generic;
@@ -33,6 +33,9 @@
         {
             public string clusterId;
             public List<AudioClip> clips;
+            [Min(0)] public int maxSimultaneous;
+            [Min(0f)] public float minRetriggerInterval;
+            [Range(0f, 1f)] public float spatialBlend;
         }
 
         [Header("Single Audio Clips")]
@@ -44,6 +47,8 @@
         private Dictionary<string, AudioClip> directClipLookup;
         private Dictionary<string, AudioEntry> entryLookup;
         private Dictionary<string, List<AudioClip>> clusterLookup;
+        private Dictionary<string, AudioClusterEntry> clusterEntryLookup;
+
 
         public bool ContainsKey(string key)
         {
@@ -156,6 +161,7 @@
             }
 
             clusterLookup = new Dictionary<string, List<AudioClip>>(StringComparer.OrdinalIgnoreCase);
+            clusterEntryLookup = new Dictionary<string, AudioClusterEntry>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < audioClusters.Count; i++)
             {
                 AudioClusterEntry cluster = audioClusters[i];
@@ -173,6 +179,7 @@
                     if (validClips.Count > 0)
                     {
                         clusterLookup[cluster.clusterId] = validClips;
+                        clusterEntryLookup[cluster.clusterId] = cluster;
                     }
                 }
             }
@@ -216,6 +223,18 @@
             return false;
         }
 
+        public bool TryGetClusterEntry(string key, out AudioClusterEntry entry)
+        {
+            EnsureLookupInitialized();
+            if (!string.IsNullOrWhiteSpace(key) && clusterEntryLookup.TryGetValue(key, out entry))
+            {
+                return true;
+            }
+
+            entry = default;
+            return false;
+        }
+
         public bool TryGetSequentialClip(string key, ref int currentIndex, out AudioClip clip)
         {
             EnsureLookupInitialized();
@@ -249,7 +268,7 @@
 
         private void EnsureLookupInitialized()
         {
-            if (directClipLookup == null || entryLookup == null || clusterLookup == null)
+            if (directClipLookup == null || entryLookup == null || clusterLookup == null || clusterEntryLookup == null)
             {
                 InitializeLookup();
             }
