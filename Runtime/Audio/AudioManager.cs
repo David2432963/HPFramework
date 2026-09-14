@@ -355,7 +355,10 @@
 
         public void PlayRandomSfxInCluster(string clusterId, float volumeScale = 1f)
         {
-            PlaySfx(clusterId, volumeScale);
+            if (TryGetClusterClip(clusterId, out AudioClip clip, out AudioPlaybackPolicy policy))
+            {
+                PlaySfxInternal(clip, clusterId, null, volumeScale, policy, null);
+            }
         }
 
         public void PlaySequentialSfxInCluster(string clusterId, float volumeScale = 1f)
@@ -367,7 +370,7 @@
                     clusterId,
                     null,
                     volumeScale,
-                    AudioPlaybackPolicy.Default,
+                    GetClusterPolicy(clusterId),
                     null);
             }
         }
@@ -429,7 +432,10 @@
             Vector3 position,
             float volumeScale = 1f)
         {
-            PlaySfxAtPosition(clusterId, position, volumeScale);
+            if (TryGetClusterClip(clusterId, out AudioClip clip, out AudioPlaybackPolicy policy))
+            {
+                PlaySfxInternal(clip, clusterId, position, volumeScale, policy, null);
+            }
         }
 
         public void PlaySequentialSfxInClusterAtPosition(
@@ -444,7 +450,7 @@
                     clusterId,
                     position,
                     volumeScale,
-                    AudioPlaybackPolicy.Default,
+                    GetClusterPolicy(clusterId),
                     null);
             }
         }
@@ -1001,6 +1007,36 @@
 
             clusterSequentialIndices[key] = index;
             return true;
+        }
+
+        private bool TryGetClusterClip(
+            string clusterId,
+            out AudioClip clip,
+            out AudioPlaybackPolicy policy)
+        {
+            // Cluster playback uses the authored cluster policy.
+            clip = null;
+            policy = AudioPlaybackPolicy.Default;
+            if (audioLibrary == null
+                || !audioLibrary.TryGetClusterEntry(clusterId, out AudioLibrarySO.AudioClusterEntry cluster)
+                || cluster.clips == null
+                || cluster.clips.Count == 0)
+            {
+                BaseLog.LogWarning($"Audio cluster '{clusterId}' was not found in AudioLibrary.");
+                return false;
+            }
+
+            clip = cluster.clips[UnityEngine.Random.Range(0, cluster.clips.Count)];
+            policy = cluster.Policy;
+            return clip != null;
+        }
+
+        private AudioPlaybackPolicy GetClusterPolicy(string clusterId)
+        {
+            return audioLibrary != null
+                && audioLibrary.TryGetClusterEntry(clusterId, out AudioLibrarySO.AudioClusterEntry cluster)
+                ? cluster.Policy
+                : AudioPlaybackPolicy.Default;
         }
 
         private void SyncWithSettings()
