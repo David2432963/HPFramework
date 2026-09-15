@@ -1,4 +1,4 @@
-namespace HP.Framework.Audio
+﻿namespace HP.Framework.Audio
 {
     using System;
     using System.Collections.Generic;
@@ -33,9 +33,18 @@ namespace HP.Framework.Audio
         {
             public string clusterId;
             public List<AudioClip> clips;
+            public int priority;
             [Min(0)] public int maxSimultaneous;
             [Min(0f)] public float minRetriggerInterval;
             [Range(0f, 1f)] public float spatialBlend;
+            public AudioCategory category;
+
+            public AudioPlaybackPolicy Policy => new AudioPlaybackPolicy(
+                priority,
+                maxSimultaneous,
+                minRetriggerInterval,
+                spatialBlend,
+                category);
         }
 
         [Header("Single Audio Clips")]
@@ -48,7 +57,6 @@ namespace HP.Framework.Audio
         private Dictionary<string, AudioEntry> entryLookup;
         private Dictionary<string, List<AudioClip>> clusterLookup;
         private Dictionary<string, AudioClusterEntry> clusterEntryLookup;
-
 
         public bool ContainsKey(string key)
         {
@@ -268,7 +276,10 @@ namespace HP.Framework.Audio
 
         private void EnsureLookupInitialized()
         {
-            if (directClipLookup == null || entryLookup == null || clusterLookup == null || clusterEntryLookup == null)
+            if (directClipLookup == null
+                || entryLookup == null
+                || clusterLookup == null
+                || clusterEntryLookup == null)
             {
                 InitializeLookup();
             }
@@ -277,4 +288,3 @@ namespace HP.Framework.Audio
 
 
 }
-
