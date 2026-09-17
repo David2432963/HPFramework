@@ -42,3 +42,13 @@ Bootstrap registers the coordinator but does **not** auto-run it from `Awake`, `
 ## Loading UI
 
 Startup progress and scene-loading progress are separate domains. Presenters may consume `IProgressSource`, but StartupCoordinator is not merged into GameSceneManager.
+
+`GameSceneManager` also separates **Scene Ready** from application/gameplay readiness:
+
+- pre-activation progress is capped at `GameSceneManager.ActivationProgressCeiling` (`0.99`);
+- `LoadProgressChanged(1f)` is published only after the target Unity scene has activated, is valid/loaded, and any requested active-scene switch succeeds;
+- `100%` therefore means the scene-navigation contract is complete, not that scene-owned `IAsyncStartable` work or external SDK readiness has finished.
+
+`SceneLoadStage` exposes coarse transition diagnostics (`LoadingPresentation`, `StreamingTarget`, `AwaitingActivation`, `ActivatingTarget`, `FinalizingTarget`, `UnloadingPresentation`, completion/failure). The activation warning budget is diagnostic only: slow activation is not converted into a failure or automatic retry after Unity scene activation has begun.
+
+Keep synchronous `Awake`/`IInitializable` work local and bounded. Optional network/native/platform initialization must not be used as a scene-activation readiness barrier.

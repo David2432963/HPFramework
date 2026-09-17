@@ -172,6 +172,7 @@ namespace HP.Framework.Tests
 
                 Assert.That(failureReported, Is.True);
                 Assert.That(sceneManager.IsLoading, Is.False);
+                Assert.That(sceneManager.CurrentLoadStage, Is.EqualTo(SceneLoadStage.Idle));
             }
             finally
             {
@@ -235,6 +236,78 @@ namespace HP.Framework.Tests
             }
 
             yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator LoadProgressReporter_CapsBeforeSceneActivation()
+        {
+            GameObject managerObject = new GameObject("LoadProgressContractTest");
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                float maximumProgress = 0f;
+                float lastProgress = 0f;
+                int progressEventCount = 0;
+                sceneManager.LoadProgressChanged += progress =>
+                {
+                    maximumProgress = Mathf.Max(maximumProgress, progress);
+                    lastProgress = progress;
+                    progressEventCount++;
+                };
+
+                MethodInfo reporter = typeof(GameSceneManager).GetMethod(
+                    "ReportLoadProgressAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(reporter, Is.Not.Null);
+
+                AsyncOperation operation = Resources.UnloadUnusedAssets();
+                UniTask task = (UniTask)reporter.Invoke(
+                    sceneManager,
+                    new object[] { operation, 0f, CancellationToken.None });
+                yield return task.ToCoroutine();
+
+                Assert.That(progressEventCount, Is.GreaterThan(0));
+                Assert.That(
+                    maximumProgress,
+                    Is.LessThanOrEqualTo(GameSceneManager.ActivationProgressCeiling + 0.0001f));
+                Assert.That(
+                    lastProgress,
+                    Is.EqualTo(GameSceneManager.ActivationProgressCeiling).Within(0.0001f));
+                Assert.That(lastProgress, Is.LessThan(1f));
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(managerObject);
+            }
+
+            yield return null;
+        }
+
+        [Test]
+        public void SceneLoadStageTopology_AllowsOnlyExpectedTransitions()
+        {
+            MethodInfo validator = typeof(GameSceneManager).GetMethod(
+                "IsValidStageTransition",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.That(validator, Is.Not.Null);
+
+            bool Valid(SceneLoadStage current, SceneLoadStage next)
+                => (bool)validator.Invoke(null, new object[] { current, next });
+
+            Assert.That(Valid(SceneLoadStage.Idle, SceneLoadStage.LoadingPresentation), Is.True);
+            Assert.That(Valid(SceneLoadStage.LoadingPresentation, SceneLoadStage.StreamingTarget), Is.True);
+            Assert.That(Valid(SceneLoadStage.StreamingTarget, SceneLoadStage.AwaitingActivation), Is.True);
+            Assert.That(Valid(SceneLoadStage.AwaitingActivation, SceneLoadStage.ActivatingTarget), Is.True);
+            Assert.That(Valid(SceneLoadStage.ActivatingTarget, SceneLoadStage.FinalizingTarget), Is.True);
+            Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.UnloadingPresentation), Is.True);
+            Assert.That(Valid(SceneLoadStage.UnloadingPresentation, SceneLoadStage.Completed), Is.True);
+            Assert.That(Valid(SceneLoadStage.Completed, SceneLoadStage.Idle), Is.True);
+            Assert.That(Valid(SceneLoadStage.StreamingTarget, SceneLoadStage.Failed), Is.True);
+            Assert.That(Valid(SceneLoadStage.Failed, SceneLoadStage.Idle), Is.True);
+
+            Assert.That(Valid(SceneLoadStage.StreamingTarget, SceneLoadStage.Completed), Is.False);
+            Assert.That(Valid(SceneLoadStage.Failed, SceneLoadStage.ActivatingTarget), Is.False);
+            Assert.That(Valid(SceneLoadStage.Idle, SceneLoadStage.FinalizingTarget), Is.False);
         }
 
         [UnityTest]

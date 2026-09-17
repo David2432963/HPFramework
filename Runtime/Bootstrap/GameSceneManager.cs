@@ -11,6 +11,19 @@
     using VContainer;
     using VContainer.Unity;
 
+    public enum SceneLoadStage
+    {
+        Idle = 0,
+        LoadingPresentation = 1,
+        StreamingTarget = 2,
+        AwaitingActivation = 3,
+        ActivatingTarget = 4,
+        FinalizingTarget = 5,
+        UnloadingPresentation = 6,
+        Completed = 7,
+        Failed = 8
+    }
+
     /// <summary>
     /// Cancellation-aware scene transition service. Every request completes, throws, or is cancelled.
     /// Unity cannot stop an AsyncOperation after it starts, so cancellation releases scene activation
@@ -21,13 +34,17 @@
         public event Action<string> SceneLoadStarted;
         public event Action<string> SceneLoadCompleted;
         public event Action<string> SceneUnloadCompleted;
+        public const float ActivationProgressCeiling = 0.99f;
+
         public event Action<float> LoadProgressChanged;
+        public event Action<SceneLoadStage> LoadStageChanged;
         public event Action<string, Exception> SceneLoadFailed;
 
         [Header("Loading Settings")]
         [SerializeField, Min(0f)] private float defaultFakeLoadingDuration = 0.5f;
         [SerializeField, Min(0)] private int stutterCount;
         [SerializeField, Min(0f)] private float maxStutterDuration = 0.15f;
+        [SerializeField, Min(0f)] private float activationWarningThresholdSeconds = 5f;
         [SerializeField] private string loadingSceneName = BaseConstants.DefaultLoadingSceneName;
 
         private readonly List<float> stutterPointsCache = new List<float>();
@@ -35,9 +52,12 @@
         private RootLifetimeScope rootLifetimeScope;
         private bool isLoading;
         private string activeSceneName;
+        private SceneLoadStage currentLoadStage = SceneLoadStage.Idle;
+        private double currentLoadStageStartedAt;
 
         public bool IsLoading => isLoading;
         public string CurrentSceneName => activeSceneName;
+        public SceneLoadStage CurrentLoadStage => currentLoadStage;
 
         [Inject]
         public void Construct(
@@ -52,6 +72,8 @@
         {
             activeSceneName = SceneManager.GetActiveScene().name;
             isLoading = false;
+            currentLoadStage = SceneLoadStage.Idle;
+            currentLoadStageStartedAt = Time.realtimeSinceStartupAsDouble;
             procedureManager?.RegisterSceneLoader(this);
         }
 
@@ -80,14 +102,18 @@
             isLoading = true;
             AsyncOperation targetOperation = null;
             IDisposable parentOverride = null;
+            bool loadSucceeded = false;
+            bool failureReported = false;
 
             try
             {
+                SetLoadStage(SceneLoadStage.LoadingPresentation);
                 cancellationToken.ThrowIfCancellationRequested();
                 SceneLoadStarted?.Invoke(sceneName);
                 parentOverride = LifetimeScope.EnqueueParent(rootLifetimeScope);
                 await TryLoadLoadingSceneAsync(sceneName, cancellationToken);
 
+                SetLoadStage(SceneLoadStage.StreamingTarget);
                 targetOperation = SceneManager.LoadSceneAsync(sceneName, loadMode);
                 if (targetOperation == null)
                 {
@@ -98,9 +124,12 @@
                 targetOperation.allowSceneActivation = false;
                 await ReportLoadProgressAsync(targetOperation, fakeLoadingDuration, cancellationToken);
 
+                SetLoadStage(SceneLoadStage.AwaitingActivation);
                 targetOperation.allowSceneActivation = true;
-                await AwaitOperationAsync(targetOperation, CancellationToken.None);
+                SetLoadStage(SceneLoadStage.ActivatingTarget);
+                await AwaitTargetActivationAsync(targetOperation, sceneName);
 
+                SetLoadStage(SceneLoadStage.FinalizingTarget);
                 Scene loadedScene = SceneManager.GetSceneByName(sceneName);
                 if (!loadedScene.IsValid() || !loadedScene.isLoaded)
                 {
@@ -123,10 +152,12 @@
 
                 LoadProgressChanged?.Invoke(1f);
                 SceneLoadCompleted?.Invoke(sceneName);
+                loadSucceeded = true;
                 return loadedScene;
             }
             catch (OperationCanceledException exception)
             {
+                SetLoadStage(SceneLoadStage.Failed);
                 if (targetOperation != null && !targetOperation.isDone)
                 {
                     targetOperation.allowSceneActivation = true;
@@ -134,18 +165,42 @@
                 }
 
                 SceneLoadFailed?.Invoke(sceneName, exception);
+                failureReported = true;
                 throw;
             }
             catch (Exception exception)
             {
+                SetLoadStage(SceneLoadStage.Failed);
                 SceneLoadFailed?.Invoke(sceneName, exception);
+                failureReported = true;
                 throw;
             }
             finally
             {
                 try
                 {
+                    if (loadSucceeded)
+                    {
+                        SetLoadStage(SceneLoadStage.UnloadingPresentation);
+                    }
+
                     await UnloadLoadingSceneIfPresentAsync();
+                }
+                catch (Exception cleanupException)
+                {
+                    if (loadSucceeded)
+                    {
+                        SetLoadStage(SceneLoadStage.Failed);
+                        if (!failureReported)
+                        {
+                            SceneLoadFailed?.Invoke(sceneName, cleanupException);
+                        }
+
+                        throw;
+                    }
+
+                    BaseLog.LogError(
+                        $"[GameSceneManager] Failed to unload loading presentation after '{sceneName}' failed: {cleanupException}");
                 }
                 finally
                 {
@@ -156,6 +211,15 @@
                     finally
                     {
                         isLoading = false;
+                        if (loadSucceeded && currentLoadStage != SceneLoadStage.Failed)
+                        {
+                            SetLoadStage(SceneLoadStage.Completed);
+                        }
+
+                        if (currentLoadStage != SceneLoadStage.Idle)
+                        {
+                            SetLoadStage(SceneLoadStage.Idle);
+                        }
                     }
                 }
             }
@@ -343,7 +407,7 @@
             float currentStutterWait = 0f;
             int stutterIndex = 0;
 
-            while (operation.progress < 0.89f || virtualProgress < 1f)
+            while (operation.progress < 0.89f || virtualProgress < ActivationProgressCeiling)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -377,12 +441,9 @@
                     ? 1f
                     : Mathf.Clamp01(logicalTime / targetDuration);
                 float actualProgress = Mathf.Clamp01(operation.progress / 0.9f);
-                float targetProgress = Mathf.Max(fakeProgress, actualProgress);
-
-                if (operation.progress < 0.89f)
-                {
-                    targetProgress = Mathf.Min(targetProgress, 0.99f);
-                }
+                float targetProgress = Mathf.Min(
+                    Mathf.Max(fakeProgress, actualProgress),
+                    ActivationProgressCeiling);
 
                 virtualProgress = Mathf.MoveTowards(
                     virtualProgress,
@@ -390,12 +451,103 @@
                     deltaTime * 3f);
                 LoadProgressChanged?.Invoke(virtualProgress);
 
-                if (virtualProgress >= 1f && operation.progress >= 0.89f)
+                if (virtualProgress >= ActivationProgressCeiling && operation.progress >= 0.89f)
                 {
                     return;
                 }
 
                 await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
+            }
+        }
+
+        private async UniTask AwaitTargetActivationAsync(
+            AsyncOperation operation,
+            string sceneName)
+        {
+            double startedAt = Time.realtimeSinceStartupAsDouble;
+            bool warningReported = false;
+            while (operation != null && !operation.isDone)
+            {
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                if (!warningReported
+                    && activationWarningThresholdSeconds > 0f
+                    && Time.realtimeSinceStartupAsDouble - startedAt >= activationWarningThresholdSeconds)
+                {
+                    warningReported = true;
+                    Debug.LogWarning(
+                        $"[{nameof(GameSceneManager)}] Target scene '{sceneName}' activation exceeded " +
+                        $"{activationWarningThresholdSeconds:0.###}s. " +
+                        $"stage={currentLoadStage}, progress={operation.progress:0.###}, isDone={operation.isDone}",
+                        this);
+                }
+#endif
+                await UniTask.Yield(PlayerLoopTiming.Update, CancellationToken.None);
+            }
+        }
+
+        private void SetLoadStage(SceneLoadStage nextStage)
+        {
+            if (currentLoadStage == nextStage)
+            {
+                return;
+            }
+
+            if (!IsValidStageTransition(currentLoadStage, nextStage))
+            {
+                throw new InvalidOperationException(
+                    $"Invalid scene-load stage transition: {currentLoadStage} -> {nextStage}.");
+            }
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            double now = Time.realtimeSinceStartupAsDouble;
+            if (currentLoadStage != SceneLoadStage.Idle)
+            {
+                double duration = Math.Max(0d, now - currentLoadStageStartedAt);
+                Debug.Log(
+                    $"[{nameof(GameSceneManager)}] {currentLoadStage} -> {nextStage} " +
+                    $"after {duration:0.000}s.",
+                    this);
+            }
+
+            currentLoadStageStartedAt = now;
+#else
+            currentLoadStageStartedAt = Time.realtimeSinceStartupAsDouble;
+#endif
+            currentLoadStage = nextStage;
+            try
+            {
+                LoadStageChanged?.Invoke(nextStage);
+            }
+            catch (Exception exception)
+            {
+                BaseLog.LogError(
+                    $"[{nameof(GameSceneManager)}] A {nameof(LoadStageChanged)} observer threw while entering {nextStage}: {exception}");
+            }
+        }
+
+        private static bool IsValidStageTransition(SceneLoadStage current, SceneLoadStage next)
+        {
+            switch (current)
+            {
+                case SceneLoadStage.Idle:
+                    return next == SceneLoadStage.LoadingPresentation;
+                case SceneLoadStage.LoadingPresentation:
+                    return next == SceneLoadStage.StreamingTarget || next == SceneLoadStage.Failed;
+                case SceneLoadStage.StreamingTarget:
+                    return next == SceneLoadStage.AwaitingActivation || next == SceneLoadStage.Failed;
+                case SceneLoadStage.AwaitingActivation:
+                    return next == SceneLoadStage.ActivatingTarget || next == SceneLoadStage.Failed;
+                case SceneLoadStage.ActivatingTarget:
+                    return next == SceneLoadStage.FinalizingTarget || next == SceneLoadStage.Failed;
+                case SceneLoadStage.FinalizingTarget:
+                    return next == SceneLoadStage.UnloadingPresentation || next == SceneLoadStage.Failed;
+                case SceneLoadStage.UnloadingPresentation:
+                    return next == SceneLoadStage.Completed || next == SceneLoadStage.Failed;
+                case SceneLoadStage.Completed:
+                case SceneLoadStage.Failed:
+                    return next == SceneLoadStage.Idle;
+                default:
+                    return false;
             }
         }
 
