@@ -1,4 +1,4 @@
-﻿namespace HP.Framework.Bootstrap
+namespace HP.Framework.Bootstrap
 {
     using System;
     using System.Collections;
@@ -466,6 +466,8 @@
         {
             double startedAt = Time.realtimeSinceStartupAsDouble;
             bool warningReported = false;
+            const float visualCompletionDurationSeconds = 1.25f;
+
             while (operation != null && !operation.isDone)
             {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -481,9 +483,20 @@
                         this);
                 }
 #endif
+
+                float activationElapsed = Mathf.Max(
+                    0f,
+                    (float)(Time.realtimeSinceStartupAsDouble - startedAt));
+                float visualProgress = Mathf.Lerp(
+                    ActivationProgressCeiling,
+                    1f,
+                    Mathf.Clamp01(activationElapsed / visualCompletionDurationSeconds));
+                LoadProgressChanged?.Invoke(visualProgress);
+
                 await UniTask.Yield(PlayerLoopTiming.Update, CancellationToken.None);
             }
         }
+
 
         private void SetLoadStage(SceneLoadStage nextStage)
         {
