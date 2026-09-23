@@ -2,7 +2,6 @@ namespace HP.Framework.Bootstrap
 {
     using System;
     using System.Collections;
-    using System.Collections.Generic;
     using System.Threading;
     using Cysharp.Threading.Tasks;
     using HP.Framework;
@@ -21,7 +20,8 @@ namespace HP.Framework.Bootstrap
         FinalizingTarget = 5,
         UnloadingPresentation = 6,
         Completed = 7,
-        Failed = 8
+        Failed = 8,
+        WaitingForReadiness = 9
     }
 
     /// <summary>
@@ -34,30 +34,37 @@ namespace HP.Framework.Bootstrap
         public event Action<string> SceneLoadStarted;
         public event Action<string> SceneLoadCompleted;
         public event Action<string> SceneUnloadCompleted;
-        public const float ActivationProgressCeiling = 0.99f;
+        public const float SceneStreamingProgressCeiling = 0.8f;
+        public const float SceneActivationProgressCeiling = 0.9f;
+        public const float SceneReadinessProgressCeiling = 0.99f;
+        public const float ActivationProgressCeiling = SceneReadinessProgressCeiling;
 
         public event Action<float> LoadProgressChanged;
         public event Action<SceneLoadStage> LoadStageChanged;
         public event Action<string, Exception> SceneLoadFailed;
 
         [Header("Loading Settings")]
-        [SerializeField, Min(0f)] private float defaultFakeLoadingDuration = 0.5f;
-        [SerializeField, Min(0)] private int stutterCount;
-        [SerializeField, Min(0f)] private float maxStutterDuration = 0.15f;
+        [Tooltip("Compatibility name: this is a minimum loading-presentation duration, not fake progress.")]
+        [SerializeField, Min(0f)] private float defaultFakeLoadingDuration;
         [SerializeField, Min(0f)] private float activationWarningThresholdSeconds = 5f;
+        [SerializeField, Min(1f)] private float readinessTimeoutSeconds = 30f;
         [SerializeField] private string loadingSceneName = BaseConstants.DefaultLoadingSceneName;
 
-        private readonly List<float> stutterPointsCache = new List<float>();
         private ProcedureManager procedureManager;
         private RootLifetimeScope rootLifetimeScope;
         private bool isLoading;
         private string activeSceneName;
         private SceneLoadStage currentLoadStage = SceneLoadStage.Idle;
         private double currentLoadStageStartedAt;
+        private bool sceneReadinessRequired;
+        private bool sceneReadinessReady;
+        private Exception sceneReadinessFailure;
+        private float sceneReadinessProgress;
 
         public bool IsLoading => isLoading;
         public string CurrentSceneName => activeSceneName;
         public SceneLoadStage CurrentLoadStage => currentLoadStage;
+        public bool IsSceneReadinessExpected => isLoading && sceneReadinessRequired;
 
         [Inject]
         public void Construct(
@@ -82,28 +89,68 @@ namespace HP.Framework.Bootstrap
             float fakeLoadingDuration = 0f,
             CancellationToken cancellationToken = default)
         {
-            return LoadSceneAsync(
+            return LoadSceneInternalAsync(
                 sceneName,
                 LoadSceneMode.Single,
                 setActiveScene: true,
-                fakeLoadingDuration: fakeLoadingDuration,
+                minimumLoadingDisplayDuration: fakeLoadingDuration,
+                waitForSceneReadiness: false,
                 cancellationToken: cancellationToken);
         }
 
-        public async UniTask<Scene> LoadSceneAsync(
+        public UniTask<Scene> LoadSceneWithReadinessAsync(
+            string sceneName,
+            float minimumLoadingDisplayDuration = 0f,
+            CancellationToken cancellationToken = default)
+        {
+            return LoadSceneInternalAsync(
+                sceneName,
+                LoadSceneMode.Single,
+                setActiveScene: true,
+                minimumLoadingDisplayDuration: minimumLoadingDisplayDuration,
+                waitForSceneReadiness: true,
+                cancellationToken: cancellationToken);
+        }
+
+        public UniTask<Scene> LoadSceneAsync(
             string sceneName,
             LoadSceneMode loadMode,
             bool setActiveScene,
             float fakeLoadingDuration = 0f,
             CancellationToken cancellationToken = default)
         {
+            return LoadSceneInternalAsync(
+                sceneName,
+                loadMode,
+                setActiveScene,
+                minimumLoadingDisplayDuration: fakeLoadingDuration,
+                waitForSceneReadiness: false,
+                cancellationToken: cancellationToken);
+        }
+
+        private async UniTask<Scene> LoadSceneInternalAsync(
+            string sceneName,
+            LoadSceneMode loadMode,
+            bool setActiveScene,
+            float minimumLoadingDisplayDuration,
+            bool waitForSceneReadiness,
+            CancellationToken cancellationToken)
+        {
+            if (currentLoadStage == SceneLoadStage.Failed)
+            {
+                SetLoadStage(SceneLoadStage.Idle);
+            }
+
             ValidateLoadRequest(sceneName);
 
             isLoading = true;
+            BeginSceneReadiness(waitForSceneReadiness);
             AsyncOperation targetOperation = null;
             IDisposable parentOverride = null;
             bool loadSucceeded = false;
             bool failureReported = false;
+            bool targetActivated = false;
+            bool preserveFailurePresentation = false;
 
             try
             {
@@ -122,12 +169,16 @@ namespace HP.Framework.Bootstrap
                 }
 
                 targetOperation.allowSceneActivation = false;
-                await ReportLoadProgressAsync(targetOperation, fakeLoadingDuration, cancellationToken);
+                await ReportLoadProgressAsync(
+                    targetOperation,
+                    minimumLoadingDisplayDuration,
+                    cancellationToken);
 
                 SetLoadStage(SceneLoadStage.AwaitingActivation);
                 targetOperation.allowSceneActivation = true;
                 SetLoadStage(SceneLoadStage.ActivatingTarget);
                 await AwaitTargetActivationAsync(targetOperation, sceneName);
+                targetActivated = true;
 
                 SetLoadStage(SceneLoadStage.FinalizingTarget);
                 Scene loadedScene = SceneManager.GetSceneByName(sceneName);
@@ -150,6 +201,13 @@ namespace HP.Framework.Bootstrap
                     activeSceneName = loadedScene.name;
                 }
 
+                LoadProgressChanged?.Invoke(SceneActivationProgressCeiling);
+                if (waitForSceneReadiness)
+                {
+                    SetLoadStage(SceneLoadStage.WaitingForReadiness);
+                    await AwaitSceneReadinessAsync(sceneName);
+                }
+
                 LoadProgressChanged?.Invoke(1f);
                 SceneLoadCompleted?.Invoke(sceneName);
                 loadSucceeded = true;
@@ -164,6 +222,8 @@ namespace HP.Framework.Bootstrap
                     await AwaitOperationAsync(targetOperation, CancellationToken.None);
                 }
 
+                targetActivated = targetActivated || (targetOperation != null && targetOperation.isDone);
+                preserveFailurePresentation = targetActivated;
                 SceneLoadFailed?.Invoke(sceneName, exception);
                 failureReported = true;
                 throw;
@@ -171,6 +231,8 @@ namespace HP.Framework.Bootstrap
             catch (Exception exception)
             {
                 SetLoadStage(SceneLoadStage.Failed);
+                targetActivated = targetActivated || (targetOperation != null && targetOperation.isDone);
+                preserveFailurePresentation = targetActivated;
                 SceneLoadFailed?.Invoke(sceneName, exception);
                 failureReported = true;
                 throw;
@@ -184,7 +246,10 @@ namespace HP.Framework.Bootstrap
                         SetLoadStage(SceneLoadStage.UnloadingPresentation);
                     }
 
-                    await UnloadLoadingSceneIfPresentAsync();
+                    if (!preserveFailurePresentation)
+                    {
+                        await UnloadLoadingSceneIfPresentAsync();
+                    }
                 }
                 catch (Exception cleanupException)
                 {
@@ -216,10 +281,12 @@ namespace HP.Framework.Bootstrap
                             SetLoadStage(SceneLoadStage.Completed);
                         }
 
-                        if (currentLoadStage != SceneLoadStage.Idle)
+                        if (!preserveFailurePresentation && currentLoadStage != SceneLoadStage.Idle)
                         {
                             SetLoadStage(SceneLoadStage.Idle);
                         }
+
+                        ResetSceneReadiness();
                     }
                 }
             }
@@ -237,6 +304,61 @@ namespace HP.Framework.Bootstrap
                 setActiveScene: true,
                 fakeLoadingDuration: 0f,
                 cancellationToken: cancellationToken);
+        }
+
+        public UniTask<Scene> ReloadActiveSceneWithReadinessAsync(
+            CancellationToken cancellationToken = default)
+        {
+            string sceneName = string.IsNullOrWhiteSpace(activeSceneName)
+                ? SceneManager.GetActiveScene().name
+                : activeSceneName;
+
+            return LoadSceneInternalAsync(
+                sceneName,
+                LoadSceneMode.Single,
+                setActiveScene: true,
+                minimumLoadingDisplayDuration: 0f,
+                waitForSceneReadiness: true,
+                cancellationToken: cancellationToken);
+        }
+
+        public void ReportSceneReadinessProgress(float progress)
+        {
+            if (!IsSceneReadinessExpected || sceneReadinessReady || sceneReadinessFailure != null)
+            {
+                return;
+            }
+
+            sceneReadinessProgress = Mathf.Clamp01(progress);
+            if (currentLoadStage == SceneLoadStage.WaitingForReadiness)
+            {
+                LoadProgressChanged?.Invoke(Mathf.Lerp(
+                    SceneActivationProgressCeiling,
+                    SceneReadinessProgressCeiling,
+                    sceneReadinessProgress));
+            }
+        }
+
+        public void ReportSceneReady()
+        {
+            if (!IsSceneReadinessExpected || sceneReadinessFailure != null)
+            {
+                return;
+            }
+
+            sceneReadinessProgress = 1f;
+            sceneReadinessReady = true;
+        }
+
+        public void ReportSceneReadinessFailure(Exception exception)
+        {
+            if (!IsSceneReadinessExpected || sceneReadinessReady || sceneReadinessFailure != null)
+            {
+                return;
+            }
+
+            sceneReadinessFailure = exception
+                ?? new InvalidOperationException("Scene readiness failed without an exception.");
         }
 
         public async UniTask UnloadSceneAsync(
@@ -394,20 +516,16 @@ namespace HP.Framework.Bootstrap
 
         private async UniTask ReportLoadProgressAsync(
             AsyncOperation operation,
-            float requestedFakeDuration,
+            float requestedMinimumDisplayDuration,
             CancellationToken cancellationToken)
         {
-            float targetDuration = requestedFakeDuration > 0f
-                ? requestedFakeDuration
+            float minimumDisplayDuration = requestedMinimumDisplayDuration > 0f
+                ? requestedMinimumDisplayDuration
                 : defaultFakeLoadingDuration;
+            double startedAt = Time.realtimeSinceStartupAsDouble;
 
-            BuildStutterPoints();
-            float virtualProgress = 0f;
-            float logicalTime = 0f;
-            float currentStutterWait = 0f;
-            int stutterIndex = 0;
-
-            while (operation.progress < 0.89f || virtualProgress < ActivationProgressCeiling)
+            while (operation.progress < 0.89f
+                   || Time.realtimeSinceStartupAsDouble - startedAt < minimumDisplayDuration)
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -415,49 +533,12 @@ namespace HP.Framework.Bootstrap
                     cancellationToken.ThrowIfCancellationRequested();
                 }
 
-                float deltaTime = Mathf.Max(Time.unscaledDeltaTime, 0.0001f);
-                if (stutterIndex < stutterPointsCache.Count
-                    && virtualProgress >= stutterPointsCache[stutterIndex])
-                {
-                    if (currentStutterWait <= 0f)
-                    {
-                        currentStutterWait = UnityEngine.Random.Range(
-                            0.02f,
-                            Mathf.Max(0.02f, maxStutterDuration));
-                    }
-
-                    currentStutterWait -= deltaTime;
-                    if (currentStutterWait <= 0f)
-                    {
-                        stutterIndex++;
-                    }
-                }
-                else
-                {
-                    logicalTime += deltaTime;
-                }
-
-                float fakeProgress = targetDuration <= 0f
-                    ? 1f
-                    : Mathf.Clamp01(logicalTime / targetDuration);
                 float actualProgress = Mathf.Clamp01(operation.progress / 0.9f);
-                float targetProgress = Mathf.Min(
-                    Mathf.Max(fakeProgress, actualProgress),
-                    ActivationProgressCeiling);
-
-                virtualProgress = Mathf.MoveTowards(
-                    virtualProgress,
-                    targetProgress,
-                    deltaTime * 3f);
-                LoadProgressChanged?.Invoke(virtualProgress);
-
-                if (virtualProgress >= ActivationProgressCeiling && operation.progress >= 0.89f)
-                {
-                    return;
-                }
-
+                LoadProgressChanged?.Invoke(actualProgress * SceneStreamingProgressCeiling);
                 await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
             }
+
+            LoadProgressChanged?.Invoke(SceneStreamingProgressCeiling);
         }
 
         private async UniTask AwaitTargetActivationAsync(
@@ -466,7 +547,6 @@ namespace HP.Framework.Bootstrap
         {
             double startedAt = Time.realtimeSinceStartupAsDouble;
             bool warningReported = false;
-            const float visualCompletionDurationSeconds = 1.25f;
 
             while (operation != null && !operation.isDone)
             {
@@ -484,17 +564,55 @@ namespace HP.Framework.Bootstrap
                 }
 #endif
 
-                float activationElapsed = Mathf.Max(
-                    0f,
-                    (float)(Time.realtimeSinceStartupAsDouble - startedAt));
-                float visualProgress = Mathf.Lerp(
-                    ActivationProgressCeiling,
-                    1f,
-                    Mathf.Clamp01(activationElapsed / visualCompletionDurationSeconds));
-                LoadProgressChanged?.Invoke(visualProgress);
-
                 await UniTask.Yield(PlayerLoopTiming.Update, CancellationToken.None);
             }
+        }
+
+        private async UniTask AwaitSceneReadinessAsync(string sceneName)
+        {
+            double startedAt = Time.realtimeSinceStartupAsDouble;
+            CancellationToken managerLifetime = this.GetCancellationTokenOnDestroy();
+
+            LoadProgressChanged?.Invoke(Mathf.Lerp(
+                SceneActivationProgressCeiling,
+                SceneReadinessProgressCeiling,
+                sceneReadinessProgress));
+
+            while (!sceneReadinessReady)
+            {
+                if (sceneReadinessFailure != null)
+                {
+                    throw new InvalidOperationException(
+                        $"Scene '{sceneName}' failed during readiness.",
+                        sceneReadinessFailure);
+                }
+
+                double elapsed = Time.realtimeSinceStartupAsDouble - startedAt;
+                if (readinessTimeoutSeconds > 0f && elapsed >= readinessTimeoutSeconds)
+                {
+                    throw new TimeoutException(
+                        $"Scene '{sceneName}' did not report readiness within " +
+                        $"{readinessTimeoutSeconds:0.###} seconds.");
+                }
+
+                await UniTask.Yield(PlayerLoopTiming.Update, managerLifetime);
+            }
+        }
+
+        private void BeginSceneReadiness(bool required)
+        {
+            sceneReadinessRequired = required;
+            sceneReadinessReady = !required;
+            sceneReadinessFailure = null;
+            sceneReadinessProgress = 0f;
+        }
+
+        private void ResetSceneReadiness()
+        {
+            sceneReadinessRequired = false;
+            sceneReadinessReady = false;
+            sceneReadinessFailure = null;
+            sceneReadinessProgress = 0f;
         }
 
 
@@ -553,6 +671,10 @@ namespace HP.Framework.Bootstrap
                 case SceneLoadStage.ActivatingTarget:
                     return next == SceneLoadStage.FinalizingTarget || next == SceneLoadStage.Failed;
                 case SceneLoadStage.FinalizingTarget:
+                    return next == SceneLoadStage.WaitingForReadiness
+                           || next == SceneLoadStage.UnloadingPresentation
+                           || next == SceneLoadStage.Failed;
+                case SceneLoadStage.WaitingForReadiness:
                     return next == SceneLoadStage.UnloadingPresentation || next == SceneLoadStage.Failed;
                 case SceneLoadStage.UnloadingPresentation:
                     return next == SceneLoadStage.Completed || next == SceneLoadStage.Failed;
@@ -562,22 +684,6 @@ namespace HP.Framework.Bootstrap
                 default:
                     return false;
             }
-        }
-
-        private void BuildStutterPoints()
-        {
-            stutterPointsCache.Clear();
-            if (stutterCount <= 0 || maxStutterDuration <= 0f)
-            {
-                return;
-            }
-
-            for (int i = 0; i < stutterCount; i++)
-            {
-                stutterPointsCache.Add(UnityEngine.Random.Range(0.15f, 0.85f));
-            }
-
-            stutterPointsCache.Sort();
         }
 
         private async UniTask UnloadLoadingSceneIfPresentAsync()

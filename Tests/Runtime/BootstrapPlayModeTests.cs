@@ -214,17 +214,40 @@ namespace HP.Framework.Tests
                 FieldInfo progressEvent = typeof(GameSceneManager).GetField(
                     "LoadProgressChanged",
                     BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo stageEvent = typeof(GameSceneManager).GetField(
+                    "LoadStageChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo failureEvent = typeof(GameSceneManager).GetField(
+                    "SceneLoadFailed",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
                 Assert.That(progressEvent, Is.Not.Null);
+                Assert.That(stageEvent, Is.Not.Null);
+                Assert.That(failureEvent, Is.Not.Null);
+
                 Action<float> progressChanged = progressEvent.GetValue(sceneManager) as Action<float>;
+                Action<SceneLoadStage> stageChanged = stageEvent.GetValue(sceneManager) as Action<SceneLoadStage>;
+                Action<string, Exception> loadFailed =
+                    failureEvent.GetValue(sceneManager) as Action<string, Exception>;
                 Assert.That(progressChanged, Is.Not.Null);
+                Assert.That(stageChanged, Is.Not.Null);
+                Assert.That(loadFailed, Is.Not.Null);
 
                 progressChanged.Invoke(0.42f);
                 Assert.That(slider.value, Is.EqualTo(0.42f).Within(0.0001f));
                 Assert.That(text.text, Is.EqualTo("42%"));
 
+                stageChanged.Invoke(SceneLoadStage.WaitingForReadiness);
+                Assert.That(text.text, Does.Contain("42%"));
+                Assert.That(text.text, Does.Contain("Preparing gameplay"));
+
+                loadFailed.Invoke("Game", new InvalidOperationException("readiness failed"));
+                Assert.That(text.text, Is.EqualTo("Loading failed"));
+
                 UnityEngine.Object.Destroy(screenObject);
                 yield return null;
                 Assert.That(progressEvent.GetValue(sceneManager), Is.Null);
+                Assert.That(stageEvent.GetValue(sceneManager), Is.Null);
+                Assert.That(failureEvent.GetValue(sceneManager), Is.Null);
                 LogAssert.NoUnexpectedReceived();
             }
             finally
@@ -233,6 +256,47 @@ namespace HP.Framework.Tests
                 UnityEngine.Object.Destroy(screenObject);
                 UnityEngine.Object.Destroy(sliderObject);
                 UnityEngine.Object.Destroy(textObject);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator LoadingScreen_PersistsThroughReadiness_AndReleasesOnCompleted()
+        {
+            GameObject managerObject = new GameObject("LoadingScreenPersistenceManager");
+            GameObject loadingRoot = new GameObject("LoadingScreenPersistenceRoot");
+            GameObject screenObject = new GameObject("LoadingScreenPersistenceView");
+            screenObject.transform.SetParent(loadingRoot.transform, false);
+
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                LoadingScreen loadingScreen = screenObject.AddComponent<LoadingScreen>();
+                loadingScreen.Construct(sceneManager);
+
+                Assert.That(loadingRoot.scene.name, Is.EqualTo("DontDestroyOnLoad"));
+
+                FieldInfo stageEvent = typeof(GameSceneManager).GetField(
+                    "LoadStageChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(stageEvent, Is.Not.Null);
+                Action<SceneLoadStage> stageChanged =
+                    stageEvent.GetValue(sceneManager) as Action<SceneLoadStage>;
+                Assert.That(stageChanged, Is.Not.Null);
+
+                stageChanged.Invoke(SceneLoadStage.WaitingForReadiness);
+                yield return null;
+                Assert.That(loadingRoot, Is.Not.Null);
+
+                stageChanged.Invoke(SceneLoadStage.Completed);
+                yield return null;
+                Assert.That(loadingRoot == null, Is.True);
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(managerObject);
+                UnityEngine.Object.Destroy(loadingRoot);
             }
 
             yield return null;
@@ -269,11 +333,58 @@ namespace HP.Framework.Tests
                 Assert.That(progressEventCount, Is.GreaterThan(0));
                 Assert.That(
                     maximumProgress,
-                    Is.LessThanOrEqualTo(GameSceneManager.ActivationProgressCeiling + 0.0001f));
+                    Is.LessThanOrEqualTo(GameSceneManager.SceneStreamingProgressCeiling + 0.0001f));
                 Assert.That(
                     lastProgress,
-                    Is.EqualTo(GameSceneManager.ActivationProgressCeiling).Within(0.0001f));
+                    Is.EqualTo(GameSceneManager.SceneStreamingProgressCeiling).Within(0.0001f));
                 Assert.That(lastProgress, Is.LessThan(1f));
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(managerObject);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator SceneReadiness_WaitsForReady_AndNeverPublishesOneEarly()
+        {
+            GameObject managerObject = new GameObject("SceneReadinessContractTest");
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                SetField(sceneManager, "isLoading", true);
+                SetField(sceneManager, "sceneReadinessRequired", true);
+                SetField(sceneManager, "sceneReadinessReady", false);
+                SetField(sceneManager, "currentLoadStage", SceneLoadStage.WaitingForReadiness);
+
+                float maximumProgress = 0f;
+                sceneManager.LoadProgressChanged += progress =>
+                    maximumProgress = Mathf.Max(maximumProgress, progress);
+
+                MethodInfo waiter = typeof(GameSceneManager).GetMethod(
+                    "AwaitSceneReadinessAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(waiter, Is.Not.Null);
+
+                UniTask readinessTask = (UniTask)waiter.Invoke(
+                    sceneManager,
+                    new object[] { "Game" });
+                Assert.That(readinessTask.GetAwaiter().IsCompleted, Is.False);
+
+                sceneManager.ReportSceneReadinessProgress(1f);
+                Assert.That(
+                    maximumProgress,
+                    Is.EqualTo(GameSceneManager.SceneReadinessProgressCeiling).Within(0.0001f));
+                Assert.That(maximumProgress, Is.LessThan(1f));
+
+                yield return null;
+                Assert.That(readinessTask.GetAwaiter().IsCompleted, Is.False);
+
+                sceneManager.ReportSceneReady();
+                yield return readinessTask.ToCoroutine();
+                Assert.That(maximumProgress, Is.LessThan(1f));
             }
             finally
             {
@@ -299,6 +410,8 @@ namespace HP.Framework.Tests
             Assert.That(Valid(SceneLoadStage.StreamingTarget, SceneLoadStage.AwaitingActivation), Is.True);
             Assert.That(Valid(SceneLoadStage.AwaitingActivation, SceneLoadStage.ActivatingTarget), Is.True);
             Assert.That(Valid(SceneLoadStage.ActivatingTarget, SceneLoadStage.FinalizingTarget), Is.True);
+            Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.WaitingForReadiness), Is.True);
+            Assert.That(Valid(SceneLoadStage.WaitingForReadiness, SceneLoadStage.UnloadingPresentation), Is.True);
             Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.UnloadingPresentation), Is.True);
             Assert.That(Valid(SceneLoadStage.UnloadingPresentation, SceneLoadStage.Completed), Is.True);
             Assert.That(Valid(SceneLoadStage.Completed, SceneLoadStage.Idle), Is.True);

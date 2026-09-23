@@ -43,12 +43,15 @@ Bootstrap registers the coordinator but does **not** auto-run it from `Awake`, `
 
 Startup progress and scene-loading progress are separate domains. Presenters may consume `IProgressSource`, but StartupCoordinator is not merged into GameSceneManager.
 
-`GameSceneManager` also separates **Scene Ready** from application/gameplay readiness:
+`GameSceneManager` supports two scene-transition contracts:
 
-- pre-activation progress is capped at `GameSceneManager.ActivationProgressCeiling` (`0.99`);
-- `LoadProgressChanged(1f)` is published only after the target Unity scene has activated, is valid/loaded, and any requested active-scene switch succeeds;
-- `100%` therefore means the scene-navigation contract is complete, not that scene-owned `IAsyncStartable` work or external SDK readiness has finished.
+- `LoadSceneAsync(...)` keeps the generic scene-navigation contract. Streaming progress is reported in the `0..0.8` range, activation/finalization reaches `0.9`, and completion publishes `1f`.
+- `LoadSceneWithReadinessAsync(...)` / `ReloadActiveSceneWithReadinessAsync(...)` add an explicit scene-owned readiness gate after activation. `ReportSceneReadinessProgress(...)` maps into `0.9..0.99`; only `ReportSceneReady()` lets the transition publish `1f`.
 
-`SceneLoadStage` exposes coarse transition diagnostics (`LoadingPresentation`, `StreamingTarget`, `AwaitingActivation`, `ActivatingTarget`, `FinalizingTarget`, `UnloadingPresentation`, completion/failure). The activation warning budget is diagnostic only: slow activation is not converted into a failure or automatic retry after Unity scene activation has begun.
+The compatibility parameter named `fakeLoadingDuration` is treated only as a **minimum loading-presentation duration**. It does not synthesize scene progress. Artificial stutter points and fixed 99% -> 100% activation interpolation are not part of the loading contract.
 
-Keep synchronous `Awake`/`IInitializable` work local and bounded. Optional network/native/platform initialization must not be used as a scene-activation readiness barrier.
+`SceneLoadStage` exposes coarse transition diagnostics (`LoadingPresentation`, `StreamingTarget`, `AwaitingActivation`, `ActivatingTarget`, `FinalizingTarget`, `WaitingForReadiness`, `UnloadingPresentation`, completion/failure). Activation warnings and readiness timeout are diagnostic/failure guards; neither may force gameplay to continue before Unity or scene-owned readiness has completed.
+
+The framework loading root survives `LoadSceneMode.Single` activation through `DontDestroyOnLoad` and releases itself at transition completion. This keeps the presentation visible while a readiness-aware target initializes without converting target loading to an additive-scene architecture.
+
+Keep synchronous `Awake`/`IInitializable` work local and bounded. Optional network/native/platform initialization must not be used as a scene-readiness barrier.

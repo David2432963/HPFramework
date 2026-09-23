@@ -241,9 +241,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a29e7a842158db943990b2487a4e4f6b, type: 3}
   m_Name:
   m_EditorClassIdentifier:
-  defaultFakeLoadingDuration: 2
-  stutterCount: 2
-  maxStutterDuration: 0.4
+  defaultFakeLoadingDuration: 0
+  activationWarningThresholdSeconds: 5
+  readinessTimeoutSeconds: 30
   loadingSceneName: LoadingScene
 --- !u!1 &2271244935460033042
 GameObject:
