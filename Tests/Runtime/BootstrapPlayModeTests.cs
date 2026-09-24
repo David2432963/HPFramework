@@ -194,6 +194,26 @@ namespace HP.Framework.Tests
                 typeof(RectTransform),
                 typeof(CanvasRenderer),
                 typeof(Text));
+            GameObject imageObject = new GameObject(
+                "PresentationImage",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            GameObject continueObject = new GameObject(
+                "ContinueButton",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Button));
+            Texture2D spriteTexture = new Texture2D(2, 1);
+            Sprite loadingSprite = Sprite.Create(
+                spriteTexture,
+                new Rect(0f, 0f, 1f, 1f),
+                new Vector2(0.5f, 0.5f));
+            Sprite readySprite = Sprite.Create(
+                spriteTexture,
+                new Rect(1f, 0f, 1f, 1f),
+                new Vector2(0.5f, 0.5f));
 
             try
             {
@@ -201,8 +221,14 @@ namespace HP.Framework.Tests
                 LoadingScreen loadingScreen = screenObject.AddComponent<LoadingScreen>();
                 Slider slider = sliderObject.GetComponent<Slider>();
                 Text text = textObject.GetComponent<Text>();
+                Image presentationImage = imageObject.GetComponent<Image>();
+                Button continueButton = continueObject.GetComponent<Button>();
                 SetField(loadingScreen, "progressBar", slider);
                 SetField(loadingScreen, "progressText", text);
+                SetField(loadingScreen, "presentationImage", presentationImage);
+                SetField(loadingScreen, "loadingSprite", loadingSprite);
+                SetField(loadingScreen, "readySprite", readySprite);
+                SetField(loadingScreen, "continueButton", continueButton);
 
                 slider.value = 0.75f;
                 text.text = "75%";
@@ -210,6 +236,8 @@ namespace HP.Framework.Tests
 
                 Assert.That(slider.value, Is.Zero);
                 Assert.That(text.text, Is.EqualTo("0%"));
+                Assert.That(presentationImage.sprite, Is.SameAs(loadingSprite));
+                Assert.That(continueObject.activeSelf, Is.False);
 
                 FieldInfo progressEvent = typeof(GameSceneManager).GetField(
                     "LoadProgressChanged",
@@ -239,9 +267,19 @@ namespace HP.Framework.Tests
                 stageChanged.Invoke(SceneLoadStage.WaitingForReadiness);
                 Assert.That(text.text, Does.Contain("42%"));
                 Assert.That(text.text, Does.Contain("Preparing gameplay"));
+                Assert.That(presentationImage.sprite, Is.SameAs(loadingSprite));
+                Assert.That(continueObject.activeSelf, Is.False);
+
+                stageChanged.Invoke(SceneLoadStage.WaitingForConfirmation);
+                Assert.That(text.text, Does.Contain("Ready"));
+                Assert.That(presentationImage.sprite, Is.SameAs(readySprite));
+                Assert.That(continueObject.activeSelf, Is.True);
+                Assert.That(continueButton.interactable, Is.True);
 
                 loadFailed.Invoke("Game", new InvalidOperationException("readiness failed"));
                 Assert.That(text.text, Is.EqualTo("Loading failed"));
+                Assert.That(presentationImage.sprite, Is.SameAs(loadingSprite));
+                Assert.That(continueObject.activeSelf, Is.False);
 
                 UnityEngine.Object.Destroy(screenObject);
                 yield return null;
@@ -256,6 +294,104 @@ namespace HP.Framework.Tests
                 UnityEngine.Object.Destroy(screenObject);
                 UnityEngine.Object.Destroy(sliderObject);
                 UnityEngine.Object.Destroy(textObject);
+                UnityEngine.Object.Destroy(imageObject);
+                UnityEngine.Object.Destroy(continueObject);
+                UnityEngine.Object.Destroy(loadingSprite);
+                UnityEngine.Object.Destroy(readySprite);
+                UnityEngine.Object.Destroy(spriteTexture);
+            }
+
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator LoadingScreen_ComponentProgress_UpdatesFillIndicatorAndReadyState()
+        {
+            GameObject managerObject = new GameObject("LoadingScreenComponentManager");
+            GameObject screenObject = new GameObject("LoadingScreenComponentView");
+            GameObject loadingRoot = new GameObject("LoadingState");
+            GameObject readyRoot = new GameObject("ReadyState");
+            loadingRoot.transform.SetParent(screenObject.transform, false);
+            readyRoot.transform.SetParent(screenObject.transform, false);
+
+            GameObject fillObject = new GameObject(
+                "Fill",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            fillObject.transform.SetParent(loadingRoot.transform, false);
+            Image fill = fillObject.GetComponent<Image>();
+            fill.type = Image.Type.Filled;
+            fill.fillMethod = Image.FillMethod.Horizontal;
+
+            GameObject trackObject = new GameObject("Track", typeof(RectTransform));
+            trackObject.transform.SetParent(loadingRoot.transform, false);
+            RectTransform track = trackObject.GetComponent<RectTransform>();
+            track.sizeDelta = new Vector2(100f, 10f);
+
+            GameObject indicatorObject = new GameObject(
+                "Indicator",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            indicatorObject.transform.SetParent(track, false);
+            RectTransform indicator = indicatorObject.GetComponent<RectTransform>();
+            indicator.anchorMin = new Vector2(-0.05f, 0f);
+            indicator.anchorMax = new Vector2(0.05f, 1f);
+            indicator.offsetMin = Vector2.zero;
+            indicator.offsetMax = Vector2.zero;
+
+            GameObject continueObject = new GameObject(
+                "Continue",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Button));
+            continueObject.transform.SetParent(readyRoot.transform, false);
+
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                LoadingScreen loadingScreen = screenObject.AddComponent<LoadingScreen>();
+                SetField(loadingScreen, "loadingVisualRoot", loadingRoot);
+                SetField(loadingScreen, "readyVisualRoot", readyRoot);
+                SetField(loadingScreen, "progressFillImage", fill);
+                SetField(loadingScreen, "progressTrack", track);
+                SetField(loadingScreen, "progressIndicator", indicator);
+                SetField(loadingScreen, "continueButton", continueObject.GetComponent<Button>());
+
+                loadingScreen.Construct(sceneManager);
+
+                Assert.That(loadingRoot.activeSelf, Is.True);
+                Assert.That(readyRoot.activeSelf, Is.False);
+                Assert.That(fill.fillAmount, Is.Zero);
+                Assert.That((indicator.anchorMin.x + indicator.anchorMax.x) * 0.5f, Is.Zero.Within(0.0001f));
+
+                FieldInfo progressEvent = typeof(GameSceneManager).GetField(
+                    "LoadProgressChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                FieldInfo stageEvent = typeof(GameSceneManager).GetField(
+                    "LoadStageChanged",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                Action<float> progressChanged = progressEvent.GetValue(sceneManager) as Action<float>;
+                Action<SceneLoadStage> stageChanged = stageEvent.GetValue(sceneManager) as Action<SceneLoadStage>;
+
+                progressChanged.Invoke(0.5f);
+                Assert.That(fill.fillAmount, Is.EqualTo(0.5f).Within(0.0001f));
+                Assert.That(
+                    (indicator.anchorMin.x + indicator.anchorMax.x) * 0.5f,
+                    Is.EqualTo(0.5f).Within(0.0001f));
+
+                stageChanged.Invoke(SceneLoadStage.WaitingForConfirmation);
+                Assert.That(loadingRoot.activeSelf, Is.False);
+                Assert.That(readyRoot.activeSelf, Is.True);
+                Assert.That(continueObject.activeSelf, Is.True);
+                Assert.That(continueObject.GetComponent<Button>().interactable, Is.True);
+            }
+            finally
+            {
+                UnityEngine.Object.Destroy(managerObject);
+                UnityEngine.Object.Destroy(screenObject);
             }
 
             yield return null;
@@ -411,7 +547,10 @@ namespace HP.Framework.Tests
             Assert.That(Valid(SceneLoadStage.AwaitingActivation, SceneLoadStage.ActivatingTarget), Is.True);
             Assert.That(Valid(SceneLoadStage.ActivatingTarget, SceneLoadStage.FinalizingTarget), Is.True);
             Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.WaitingForReadiness), Is.True);
+            Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.WaitingForConfirmation), Is.True);
+            Assert.That(Valid(SceneLoadStage.WaitingForReadiness, SceneLoadStage.WaitingForConfirmation), Is.True);
             Assert.That(Valid(SceneLoadStage.WaitingForReadiness, SceneLoadStage.UnloadingPresentation), Is.True);
+            Assert.That(Valid(SceneLoadStage.WaitingForConfirmation, SceneLoadStage.UnloadingPresentation), Is.True);
             Assert.That(Valid(SceneLoadStage.FinalizingTarget, SceneLoadStage.UnloadingPresentation), Is.True);
             Assert.That(Valid(SceneLoadStage.UnloadingPresentation, SceneLoadStage.Completed), Is.True);
             Assert.That(Valid(SceneLoadStage.Completed, SceneLoadStage.Idle), Is.True);
@@ -421,6 +560,38 @@ namespace HP.Framework.Tests
             Assert.That(Valid(SceneLoadStage.StreamingTarget, SceneLoadStage.Completed), Is.False);
             Assert.That(Valid(SceneLoadStage.Failed, SceneLoadStage.ActivatingTarget), Is.False);
             Assert.That(Valid(SceneLoadStage.Idle, SceneLoadStage.FinalizingTarget), Is.False);
+            Assert.That(Valid(SceneLoadStage.WaitingForConfirmation, SceneLoadStage.Completed), Is.False);
+        }
+
+        [Test]
+        public void ConfirmationGate_OnlyAcceptsOneConfirmationWhileWaiting()
+        {
+            GameObject managerObject = new GameObject("SceneConfirmationGateTest");
+            try
+            {
+                GameSceneManager sceneManager = managerObject.AddComponent<GameSceneManager>();
+                SetField(sceneManager, "isLoading", true);
+                SetField(
+                    sceneManager,
+                    "currentCompletionMode",
+                    SceneLoadCompletionMode.RequireConfirmation);
+                SetField(
+                    sceneManager,
+                    "currentLoadStage",
+                    SceneLoadStage.WaitingForConfirmation);
+                SetField(
+                    sceneManager,
+                    "transitionConfirmationSource",
+                    new UniTaskCompletionSource());
+
+                Assert.That(sceneManager.IsWaitingForConfirmation, Is.True);
+                Assert.That(sceneManager.ConfirmCurrentTransition(), Is.True);
+                Assert.That(sceneManager.ConfirmCurrentTransition(), Is.False);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(managerObject);
+            }
         }
 
         [UnityTest]

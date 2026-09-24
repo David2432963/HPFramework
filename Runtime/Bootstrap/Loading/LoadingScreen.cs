@@ -14,6 +14,15 @@ namespace HP.Framework.Bootstrap.Loading
         [Header("UI References")]
         [SerializeField] private Slider progressBar;
         [SerializeField] private Text progressText;
+        [SerializeField] private Image presentationImage;
+        [SerializeField] private Sprite loadingSprite;
+        [SerializeField] private Sprite readySprite;
+        [SerializeField] private GameObject loadingVisualRoot;
+        [SerializeField] private GameObject readyVisualRoot;
+        [SerializeField] private Image progressFillImage;
+        [SerializeField] private RectTransform progressTrack;
+        [SerializeField] private RectTransform progressIndicator;
+        [SerializeField] private Button continueButton;
 
         private GameSceneManager gameSceneManager;
         private float currentProgress;
@@ -28,6 +37,12 @@ namespace HP.Framework.Bootstrap.Loading
             this.gameSceneManager.LoadProgressChanged += OnProgressChanged;
             this.gameSceneManager.LoadStageChanged += OnLoadStageChanged;
             this.gameSceneManager.SceneLoadFailed += OnSceneLoadFailed;
+            if (continueButton != null)
+            {
+                continueButton.onClick.RemoveListener(OnContinueClicked);
+                continueButton.onClick.AddListener(OnContinueClicked);
+            }
+
             currentStage = gameSceneManager.CurrentLoadStage;
             loadFailed = false;
             persistentRoot = transform.root.gameObject;
@@ -50,6 +65,11 @@ namespace HP.Framework.Bootstrap.Loading
 
         private void OnDestroy()
         {
+            if (continueButton != null)
+            {
+                continueButton.onClick.RemoveListener(OnContinueClicked);
+            }
+
             if (gameSceneManager == null)
             {
                 return;
@@ -80,6 +100,7 @@ namespace HP.Framework.Bootstrap.Loading
                 loadFailed = false;
             }
 
+            RefreshPresentation();
             RefreshText();
         }
 
@@ -87,6 +108,7 @@ namespace HP.Framework.Bootstrap.Loading
         {
             currentStage = SceneLoadStage.Failed;
             loadFailed = true;
+            RefreshPresentation();
             RefreshText();
         }
 
@@ -98,7 +120,87 @@ namespace HP.Framework.Bootstrap.Loading
                 progressBar.value = currentProgress;
             }
 
+            UpdateProgressVisual();
+            RefreshPresentation();
             RefreshText();
+        }
+
+        private void RefreshPresentation()
+        {
+            bool canContinue = !loadFailed && currentStage == SceneLoadStage.WaitingForConfirmation;
+            bool usesStateRoots = loadingVisualRoot != null || readyVisualRoot != null;
+
+            if (loadingVisualRoot != null)
+            {
+                loadingVisualRoot.SetActive(!canContinue);
+            }
+
+            if (readyVisualRoot != null)
+            {
+                readyVisualRoot.SetActive(canContinue);
+            }
+
+            // Backward-compatible fallback for projects that still author one image
+            // and swap its sprite instead of using composited loading/ready roots.
+            if (!usesStateRoots && presentationImage != null)
+            {
+                Sprite targetSprite = canContinue && readySprite != null
+                    ? readySprite
+                    : loadingSprite;
+                if (targetSprite != null)
+                {
+                    presentationImage.sprite = targetSprite;
+                }
+            }
+
+            if (continueButton != null)
+            {
+                continueButton.gameObject.SetActive(canContinue);
+                continueButton.interactable = canContinue;
+            }
+        }
+
+        private void UpdateProgressVisual()
+        {
+            if (progressFillImage != null)
+            {
+                progressFillImage.fillAmount = currentProgress;
+            }
+
+            if (progressTrack == null || progressIndicator == null)
+            {
+                return;
+            }
+
+            float normalizedWidth = progressIndicator.anchorMax.x - progressIndicator.anchorMin.x;
+            if (normalizedWidth > 0.0001f)
+            {
+                float halfWidth = normalizedWidth * 0.5f;
+                Vector2 min = progressIndicator.anchorMin;
+                Vector2 max = progressIndicator.anchorMax;
+                min.x = currentProgress - halfWidth;
+                max.x = currentProgress + halfWidth;
+                progressIndicator.anchorMin = min;
+                progressIndicator.anchorMax = max;
+                return;
+            }
+
+            Vector2 position = progressIndicator.anchoredPosition;
+            position.x = Mathf.Lerp(0f, progressTrack.rect.width, currentProgress);
+            progressIndicator.anchoredPosition = position;
+        }
+
+        private void OnContinueClicked()
+        {
+            if (gameSceneManager == null || !gameSceneManager.ConfirmCurrentTransition())
+            {
+                return;
+            }
+
+            if (continueButton != null)
+            {
+                continueButton.interactable = false;
+            }
         }
 
         private void RefreshText()
@@ -147,6 +249,8 @@ namespace HP.Framework.Bootstrap.Loading
                     return "Finalizing scene...";
                 case SceneLoadStage.WaitingForReadiness:
                     return "Preparing gameplay...";
+                case SceneLoadStage.WaitingForConfirmation:
+                    return "Ready";
                 case SceneLoadStage.UnloadingPresentation:
                     return "Starting gameplay...";
                 case SceneLoadStage.Completed:

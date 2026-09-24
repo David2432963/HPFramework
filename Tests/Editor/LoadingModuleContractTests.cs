@@ -55,6 +55,36 @@ namespace HP.Framework.Tests
                 Assert.That(
                     screenObject.FindProperty("progressText").objectReferenceValue,
                     Is.TypeOf<Text>());
+                Assert.That(
+                    screenObject.FindProperty("loadingVisualRoot").objectReferenceValue,
+                    Is.TypeOf<GameObject>());
+                Assert.That(
+                    screenObject.FindProperty("readyVisualRoot").objectReferenceValue,
+                    Is.TypeOf<GameObject>());
+                Assert.That(
+                    screenObject.FindProperty("progressFillImage").objectReferenceValue,
+                    Is.TypeOf<Image>());
+                Assert.That(
+                    screenObject.FindProperty("progressTrack").objectReferenceValue,
+                    Is.TypeOf<RectTransform>());
+                Assert.That(
+                    screenObject.FindProperty("progressIndicator").objectReferenceValue,
+                    Is.TypeOf<RectTransform>());
+                Assert.That(
+                    screenObject.FindProperty("continueButton").objectReferenceValue,
+                    Is.TypeOf<Button>());
+
+                // The one-image sprite-swap fields remain as a backward-compatible fallback,
+                // but the canonical scene now uses composited loading/ready visual roots.
+                Assert.That(
+                    screenObject.FindProperty("presentationImage").objectReferenceValue,
+                    Is.Null);
+                Assert.That(
+                    screenObject.FindProperty("loadingSprite").objectReferenceValue,
+                    Is.Null);
+                Assert.That(
+                    screenObject.FindProperty("readySprite").objectReferenceValue,
+                    Is.Null);
             }
             finally
             {

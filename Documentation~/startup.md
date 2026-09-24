@@ -43,14 +43,16 @@ Bootstrap registers the coordinator but does **not** auto-run it from `Awake`, `
 
 Startup progress and scene-loading progress are separate domains. Presenters may consume `IProgressSource`, but StartupCoordinator is not merged into GameSceneManager.
 
-`GameSceneManager` supports two scene-transition contracts:
+`GameSceneManager` supports readiness and completion policy as separate scene-transition concerns:
 
 - `LoadSceneAsync(...)` keeps the generic scene-navigation contract. Streaming progress is reported in the `0..0.8` range, activation/finalization reaches `0.9`, and completion publishes `1f`.
 - `LoadSceneWithReadinessAsync(...)` / `ReloadActiveSceneWithReadinessAsync(...)` add an explicit scene-owned readiness gate after activation. `ReportSceneReadinessProgress(...)` maps into `0.9..0.99`; only `ReportSceneReady()` lets the transition publish `1f`.
+- Readiness loads default to `SceneLoadCompletionMode.AutoComplete`. Callers that explicitly use `RequireConfirmation` enter `SceneLoadStage.WaitingForConfirmation` after real progress reaches `1f`; `ConfirmCurrentTransition()` then releases the request. Existing overloads remain auto-complete and source-compatible.
+- `SceneLoadCompleted` is raised only after any required confirmation has been satisfied, so it represents transition release rather than readiness alone.
 
 The compatibility parameter named `fakeLoadingDuration` is treated only as a **minimum loading-presentation duration**. It does not synthesize scene progress. Artificial stutter points and fixed 99% -> 100% activation interpolation are not part of the loading contract.
 
-`SceneLoadStage` exposes coarse transition diagnostics (`LoadingPresentation`, `StreamingTarget`, `AwaitingActivation`, `ActivatingTarget`, `FinalizingTarget`, `WaitingForReadiness`, `UnloadingPresentation`, completion/failure). Activation warnings and readiness timeout are diagnostic/failure guards; neither may force gameplay to continue before Unity or scene-owned readiness has completed.
+`SceneLoadStage` exposes coarse transition diagnostics (`LoadingPresentation`, `StreamingTarget`, `AwaitingActivation`, `ActivatingTarget`, `FinalizingTarget`, `WaitingForReadiness`, optional `WaitingForConfirmation`, `UnloadingPresentation`, completion/failure). Activation warnings and readiness timeout are diagnostic/failure guards; neither may force gameplay to continue before Unity or scene-owned readiness has completed. Confirmation has no synthetic progress or timeout; it is released explicitly by the caller/UI or when the manager lifetime ends.
 
 The framework loading root survives `LoadSceneMode.Single` activation through `DontDestroyOnLoad` and releases itself at transition completion. This keeps the presentation visible while a readiness-aware target initializes without converting target loading to an additive-scene architecture.
 

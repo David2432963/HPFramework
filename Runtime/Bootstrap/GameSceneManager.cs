@@ -10,6 +10,12 @@ namespace HP.Framework.Bootstrap
     using VContainer;
     using VContainer.Unity;
 
+    public enum SceneLoadCompletionMode
+    {
+        AutoComplete = 0,
+        RequireConfirmation = 1
+    }
+
     public enum SceneLoadStage
     {
         Idle = 0,
@@ -21,7 +27,8 @@ namespace HP.Framework.Bootstrap
         UnloadingPresentation = 6,
         Completed = 7,
         Failed = 8,
-        WaitingForReadiness = 9
+        WaitingForReadiness = 9,
+        WaitingForConfirmation = 10
     }
 
     /// <summary>
@@ -60,11 +67,18 @@ namespace HP.Framework.Bootstrap
         private bool sceneReadinessReady;
         private Exception sceneReadinessFailure;
         private float sceneReadinessProgress;
+        private SceneLoadCompletionMode currentCompletionMode = SceneLoadCompletionMode.AutoComplete;
+        private UniTaskCompletionSource transitionConfirmationSource;
 
         public bool IsLoading => isLoading;
         public string CurrentSceneName => activeSceneName;
         public SceneLoadStage CurrentLoadStage => currentLoadStage;
+        public SceneLoadCompletionMode CurrentCompletionMode => currentCompletionMode;
         public bool IsSceneReadinessExpected => isLoading && sceneReadinessRequired;
+        public bool IsWaitingForConfirmation =>
+            isLoading
+            && currentCompletionMode == SceneLoadCompletionMode.RequireConfirmation
+            && currentLoadStage == SceneLoadStage.WaitingForConfirmation;
 
         [Inject]
         public void Construct(
@@ -80,6 +94,8 @@ namespace HP.Framework.Bootstrap
             activeSceneName = SceneManager.GetActiveScene().name;
             isLoading = false;
             currentLoadStage = SceneLoadStage.Idle;
+            currentCompletionMode = SceneLoadCompletionMode.AutoComplete;
+            transitionConfirmationSource = null;
             currentLoadStageStartedAt = Time.realtimeSinceStartupAsDouble;
             procedureManager?.RegisterSceneLoader(this);
         }
@@ -95,11 +111,25 @@ namespace HP.Framework.Bootstrap
                 setActiveScene: true,
                 minimumLoadingDisplayDuration: fakeLoadingDuration,
                 waitForSceneReadiness: false,
+                completionMode: SceneLoadCompletionMode.AutoComplete,
                 cancellationToken: cancellationToken);
         }
 
         public UniTask<Scene> LoadSceneWithReadinessAsync(
             string sceneName,
+            float minimumLoadingDisplayDuration = 0f,
+            CancellationToken cancellationToken = default)
+        {
+            return LoadSceneWithReadinessAsync(
+                sceneName,
+                SceneLoadCompletionMode.AutoComplete,
+                minimumLoadingDisplayDuration,
+                cancellationToken);
+        }
+
+        public UniTask<Scene> LoadSceneWithReadinessAsync(
+            string sceneName,
+            SceneLoadCompletionMode completionMode,
             float minimumLoadingDisplayDuration = 0f,
             CancellationToken cancellationToken = default)
         {
@@ -109,6 +139,7 @@ namespace HP.Framework.Bootstrap
                 setActiveScene: true,
                 minimumLoadingDisplayDuration: minimumLoadingDisplayDuration,
                 waitForSceneReadiness: true,
+                completionMode: completionMode,
                 cancellationToken: cancellationToken);
         }
 
@@ -125,6 +156,7 @@ namespace HP.Framework.Bootstrap
                 setActiveScene,
                 minimumLoadingDisplayDuration: fakeLoadingDuration,
                 waitForSceneReadiness: false,
+                completionMode: SceneLoadCompletionMode.AutoComplete,
                 cancellationToken: cancellationToken);
         }
 
@@ -134,6 +166,7 @@ namespace HP.Framework.Bootstrap
             bool setActiveScene,
             float minimumLoadingDisplayDuration,
             bool waitForSceneReadiness,
+            SceneLoadCompletionMode completionMode,
             CancellationToken cancellationToken)
         {
             if (currentLoadStage == SceneLoadStage.Failed)
@@ -142,8 +175,11 @@ namespace HP.Framework.Bootstrap
             }
 
             ValidateLoadRequest(sceneName);
+            ValidateCompletionMode(completionMode);
 
             isLoading = true;
+            currentCompletionMode = completionMode;
+            transitionConfirmationSource = null;
             BeginSceneReadiness(waitForSceneReadiness);
             AsyncOperation targetOperation = null;
             IDisposable parentOverride = null;
@@ -209,6 +245,12 @@ namespace HP.Framework.Bootstrap
                 }
 
                 LoadProgressChanged?.Invoke(1f);
+                if (completionMode == SceneLoadCompletionMode.RequireConfirmation)
+                {
+                    SetLoadStage(SceneLoadStage.WaitingForConfirmation);
+                    await AwaitTransitionConfirmationAsync();
+                }
+
                 SceneLoadCompleted?.Invoke(sceneName);
                 loadSucceeded = true;
                 return loadedScene;
@@ -287,6 +329,8 @@ namespace HP.Framework.Bootstrap
                         }
 
                         ResetSceneReadiness();
+                        currentCompletionMode = SceneLoadCompletionMode.AutoComplete;
+                        transitionConfirmationSource = null;
                     }
                 }
             }
@@ -319,7 +363,18 @@ namespace HP.Framework.Bootstrap
                 setActiveScene: true,
                 minimumLoadingDisplayDuration: 0f,
                 waitForSceneReadiness: true,
+                completionMode: SceneLoadCompletionMode.AutoComplete,
                 cancellationToken: cancellationToken);
+        }
+
+        public bool ConfirmCurrentTransition()
+        {
+            if (!IsWaitingForConfirmation || transitionConfirmationSource == null)
+            {
+                return false;
+            }
+
+            return transitionConfirmationSource.TrySetResult();
         }
 
         public void ReportSceneReadinessProgress(float progress)
@@ -454,6 +509,15 @@ namespace HP.Framework.Bootstrap
             }
         }
 
+        private static void ValidateCompletionMode(SceneLoadCompletionMode completionMode)
+        {
+            if (completionMode != SceneLoadCompletionMode.AutoComplete
+                && completionMode != SceneLoadCompletionMode.RequireConfirmation)
+            {
+                throw new ArgumentOutOfRangeException(nameof(completionMode), completionMode, null);
+            }
+        }
+
         private void ValidateLoadRequest(string sceneName)
         {
             if (string.IsNullOrWhiteSpace(sceneName))
@@ -568,6 +632,20 @@ namespace HP.Framework.Bootstrap
             }
         }
 
+        private async UniTask AwaitTransitionConfirmationAsync()
+        {
+            transitionConfirmationSource = new UniTaskCompletionSource();
+            try
+            {
+                await transitionConfirmationSource.Task.AttachExternalCancellation(
+                    this.GetCancellationTokenOnDestroy());
+            }
+            finally
+            {
+                transitionConfirmationSource = null;
+            }
+        }
+
         private async UniTask AwaitSceneReadinessAsync(string sceneName)
         {
             double startedAt = Time.realtimeSinceStartupAsDouble;
@@ -672,9 +750,14 @@ namespace HP.Framework.Bootstrap
                     return next == SceneLoadStage.FinalizingTarget || next == SceneLoadStage.Failed;
                 case SceneLoadStage.FinalizingTarget:
                     return next == SceneLoadStage.WaitingForReadiness
+                           || next == SceneLoadStage.WaitingForConfirmation
                            || next == SceneLoadStage.UnloadingPresentation
                            || next == SceneLoadStage.Failed;
                 case SceneLoadStage.WaitingForReadiness:
+                    return next == SceneLoadStage.WaitingForConfirmation
+                           || next == SceneLoadStage.UnloadingPresentation
+                           || next == SceneLoadStage.Failed;
+                case SceneLoadStage.WaitingForConfirmation:
                     return next == SceneLoadStage.UnloadingPresentation || next == SceneLoadStage.Failed;
                 case SceneLoadStage.UnloadingPresentation:
                     return next == SceneLoadStage.Completed || next == SceneLoadStage.Failed;
