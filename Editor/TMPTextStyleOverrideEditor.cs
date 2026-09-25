@@ -10,6 +10,7 @@ namespace HP.Framework.Editor
     {
         private SerializedProperty _effectsEnabled;
         private SerializedProperty _outlineEnabled;
+        private SerializedProperty _outlineDirection;
         private SerializedProperty _outlineWidth;
         private SerializedProperty _outlineColor;
         private SerializedProperty _shadowEnabled;
@@ -30,6 +31,7 @@ namespace HP.Framework.Editor
         {
             _effectsEnabled = serializedObject.FindProperty("_overrideEnabled");
             _outlineEnabled = serializedObject.FindProperty("_outlineEnabled");
+            _outlineDirection = serializedObject.FindProperty("_outlineDirection");
             _outlineWidth = serializedObject.FindProperty("_outlineWidth");
             _outlineColor = serializedObject.FindProperty("_outlineColor");
             _shadowEnabled = serializedObject.FindProperty("_underlayEnabled");
@@ -69,9 +71,10 @@ namespace HP.Framework.Editor
 
         private void DrawOutline()
         {
-            DrawSection("Outline", _outlineEnabled, out bool enabled, _serializedVersion.intValue == 0 && _outlineWidth.floatValue > 0f);
+            DrawSection("Outline", _outlineEnabled, out bool enabled, _outlineEnabled.boolValue);
             if (enabled)
             {
+                EditorGUILayout.PropertyField(_outlineDirection);
                 EditorGUILayout.PropertyField(_outlineWidth);
                 EditorGUILayout.PropertyField(_outlineColor);
             }

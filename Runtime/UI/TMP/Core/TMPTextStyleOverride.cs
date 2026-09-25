@@ -3,6 +3,13 @@ using UnityEngine;
 
 namespace HP.Framework.UI.TMP
 {
+    public enum TMPOutlineDirection
+    {
+        Centered,
+        Outside,
+        Inside
+    }
+
     /// <summary>
     /// Applies TMP outline, shadow, and glow through a material owned by this text only.
     /// </summary>
@@ -14,6 +21,7 @@ namespace HP.Framework.UI.TMP
     {
         private static readonly int OutlineColorId = Shader.PropertyToID("_OutlineColor");
         private static readonly int OutlineWidthId = Shader.PropertyToID("_OutlineWidth");
+        private static readonly int OutlineDirectionId = Shader.PropertyToID("_OutlineDirection");
         private static readonly int UnderlayColorId = Shader.PropertyToID("_UnderlayColor");
         private static readonly int UnderlayOffsetXId = Shader.PropertyToID("_UnderlayOffsetX");
         private static readonly int UnderlayOffsetYId = Shader.PropertyToID("_UnderlayOffsetY");
@@ -25,6 +33,7 @@ namespace HP.Framework.UI.TMP
         private static readonly int GlowOuterId = Shader.PropertyToID("_GlowOuter");
         private static readonly int GlowPowerId = Shader.PropertyToID("_GlowPower");
 
+        private const string OutlineKeyword = "OUTLINE_ON";
         private const string UnderlayKeyword = "UNDERLAY_ON";
         private const string GlowKeyword = "GLOW_ON";
 
@@ -32,6 +41,7 @@ namespace HP.Framework.UI.TMP
 
         [Header("Outline")]
         [SerializeField] private bool _outlineEnabled;
+        [SerializeField] private TMPOutlineDirection _outlineDirection = TMPOutlineDirection.Centered;
         [SerializeField, Range(0f, 1f)] private float _outlineWidth;
         [SerializeField, ColorUsage(true, true)] private Color _outlineColor = Color.black;
 
@@ -253,6 +263,8 @@ namespace HP.Framework.UI.TMP
         {
             SetColorIfSupported(material, OutlineColorId, _outlineColor);
             SetFloatIfSupported(material, OutlineWidthId, IsOutlineEnabled ? _outlineWidth : 0f);
+            SetFloatIfSupported(material, OutlineDirectionId, (float)_outlineDirection);
+            SetKeyword(material, OutlineKeyword, IsOutlineEnabled);
 
             SetKeyword(material, UnderlayKeyword, _underlayEnabled);
             SetColorIfSupported(material, UnderlayColorId, _underlayColor);
